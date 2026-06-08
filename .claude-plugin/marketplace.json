@@ -1,0 +1,17 @@
+{
+  "name": "nitpick-tools",
+  "owner": {
+    "name": "Lokeshwaran",
+    "email": "lokeshwaran2491@gmail.com"
+  },
+  "description": "Visual UI feedback tooling for Claude Code.",
+  "plugins": [
+    {
+      "name": "nitpick",
+      "source": "./",
+      "description": "Capture UI issues visually in a running Next.js app and turn them into precise, source-located fixes.",
+      "category": "development",
+      "tags": ["ui", "nextjs", "react", "feedback"]
+    }
+  ]
+}

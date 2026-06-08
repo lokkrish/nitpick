@@ -1,0 +1,12 @@
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Node (only relevant if you add tooling to this repo later)
+node_modules/
+npm-debug.log*
+
+# Local test scaffolding
+/sandbox/
