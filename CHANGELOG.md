@@ -4,7 +4,8 @@
 
 First cut. The full loop, end to end:
 
-- **Overlay** (`templates/nitpick/`): Ctrl+Shift+Q activation, hover inspect with live
+- **Overlay** (`templates/nitpick/`): Ctrl+Shift+. activation (configurable via `hotkey` prop,
+  matched on `event.code`) plus a clickable launcher button, hover inspect with live
   component + source label, click to select, circle/arrow/freehand annotations, comment box,
   reference-image paste/drop, best-effort annotated screenshot of the selected element.
 - **Click-to-source resolver**: layered + version-tolerant (build stamp → React Fiber
@@ -16,6 +17,9 @@ First cut. The full loop, end to end:
   TS/JS, and import aliases.
 - **`/nitpick:process`** + **`resolving-ui-feedback`** skill: read the queue, view annotated
   screenshots, fix each issue at its source, mark resolved.
+- **`/nitpick:remove`**: reverses setup — deletes the overlay + route, un-mounts from the
+  layout, drops the gitignore line, and removes `.nitpick/` and the `html-to-image` dep
+  (`--keep-feedback` / `--keep-dep` to retain either).
 
 ### Verified
 
@@ -26,10 +30,21 @@ First cut. The full loop, end to end:
   increments ids, and `GET` returns the queue.
 - Production safety gate confirmed: a prod POST returns 410 and writes nothing.
 
-### Still to verify (needs a real browser)
+- In-browser overlay UX on Next 16 / React 19: hotkey + clickable launcher, hover highlight,
+  element picking, freehand/circle/arrow annotations, and `html-to-image` capture — exercised by
+  real captures resolved through `/nitpick:process`.
 
-- The in-browser overlay UX: Ctrl+Shift+Q activation, hover highlight, element picking,
-  drawing annotations, `html-to-image` capture, and reference-image paste.
+### Known issues
+
+- `html-to-image` can return a near-blank capture for a *standalone* `next/image` SVG;
+  capturing a larger container element works fine. Tracked for 0.2.0.
+- On App Router, Server Components have no client fiber, so `componentName` falls back to
+  framework internals — element targeting still works via selector/class/screenshot, and the
+  optional build-stamp recovers exact `file:line`.
+
+### Not verified yet
+
+- Reference-image paste/drop into a report.
 
 ### Not yet (planned for 0.2.0+)
 

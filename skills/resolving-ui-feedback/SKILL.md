@@ -8,7 +8,7 @@ description: >-
 
 # Resolving Nitpick UI feedback
 
-Nitpick lets the user point at a broken UI element in their running Next.js app (Ctrl+Shift+Q),
+Nitpick lets the user point at a broken UI element in their running Next.js app (Ctrl+Shift+. (period)),
 annotate it, and save a precise, source-located report. Your job is to turn each report into a
 correct code fix. (For how reports are produced and the full data contract, see the plugin's
 `DESIGN.md`.)
@@ -29,7 +29,7 @@ correct code fix. (For how reports are produced and the full data contract, see 
 ## Workflow
 
 1. **Load the queue.** Read `.nitpick/queue.json`. No open items → say so and remind the user
-   to capture issues with Ctrl+Shift+Q. Done.
+   to capture issues with Ctrl+Shift+. (period). Done.
 2. **For each open item** (`.nitpick/<id>.json`):
    a. **See it.** Read `<id>.png` — the accent-colored circle/arrow/freehand marks the exact
       problem area. Read `<id>-ref.png` if present — that's the user's target look.

@@ -3,7 +3,7 @@
   "name": "nitpick",
   "displayName": "Nitpick",
   "version": "0.1.0",
-  "description": "Capture UI issues visually in your running Next.js app with Ctrl+Shift+Q, annotate the exact element, and turn each one into a precise, source-located fix for Claude.",
+  "description": "Capture UI issues visually in your running Next.js app with a hotkey (Ctrl+Shift+.), annotate the exact element, and turn each one into a precise, source-located fix for Claude.",
   "author": {
     "name": "Lokeshwaran",
     "email": "lokeshwaran2491@gmail.com"

@@ -14,7 +14,7 @@ source location* plus a picture of the problem.
 ## The core insight: two artifacts + a bridge
 
 A Claude Code plugin runs in the **terminal/agent** context. It cannot render anything in the
-browser. The overlay (Ctrl+Shift+Q, dim screen, circle an element) is **browser code that must
+browser. The overlay (Ctrl+Shift+. (period), dim screen, circle an element) is **browser code that must
 live inside the user's Next.js app** (dev-only). So Nitpick is necessarily three parts:
 
 ```
@@ -22,7 +22,7 @@ live inside the user's Next.js app** (dev-only). So Nitpick is necessarily three
 │  BROWSER (the Next app)  │         │  TERMINAL (Claude Code)  │
 │                          │  writes │                          │
 │  NitpickOverlay (dev):  │ ──────▶ │  Plugin:                 │
-│  • Ctrl+Shift+Q activate │ .nitpick/  • skill: resolve queue │
+│  • Ctrl+Shift+. (period) activate │ .nitpick/  • skill: resolve queue │
 │  • hover → highlight el   │  files  │  • /nitpick:process     │
 │  • circle / arrow / note │         │  • /nitpick:setup       │
 │  • paste reference image │ ◀────── │                          │

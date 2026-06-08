@@ -12,7 +12,7 @@ agent-side of Nitpick — follow the **resolving-ui-feedback** skill's workflow.
 
 1. Read `.nitpick/queue.json` in the project root.
    - If it's missing or has no `open` items, tell the user there's nothing queued and remind
-     them to capture issues with **Ctrl+Shift+Q** in their running app. Stop.
+     them to capture issues with **Ctrl+Shift+. (period)** in their running app. Stop.
 2. If the user passed an id in `$ARGUMENTS`, handle only that item. Otherwise handle every
    `open` item, **oldest id first**.
 3. For each item, load its full context and fix it (see "Per item" below).

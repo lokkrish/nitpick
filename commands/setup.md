@@ -105,7 +105,7 @@ Do **not** do this unless the user opts in.
 Summarize every file created/edited. Then tell the user:
 
 1. Run the dev server (`npm run dev` or equivalent).
-2. Press **Ctrl+Shift+Q**, click an element, annotate, add a comment, Save.
+2. Press **Ctrl+Shift+. (period)**, click an element, annotate, add a comment, Save.
 3. Confirm a `.nitpick/001.json` (and `001.png`) appears.
 4. Back here, run **`/nitpick:process`** to have me fix the queued issues.
 

@@ -6,13 +6,13 @@ Nitpick is a Claude Code plugin for people building Next.js apps with an AI codi
 hardest part of vibe-coding a UI isn't fixing issues — it's *describing* them precisely enough
 for the agent to fix the right thing. Nitpick closes that gap.
 
-Press **`Ctrl+Shift+Q`** in your running dev app, click the element that's wrong, circle it,
+Press **`Ctrl+Shift+. (period)`** in your running dev app, click the element that's wrong, circle it,
 type what's off, optionally paste a reference image — and Nitpick captures the **exact source
 location**, the component, the styles, and an annotated screenshot. Claude then works through
 your feedback queue, fixing each item at its source.
 
 ```
-  Ctrl+Shift+Q  →  click element  →  annotate + comment  →  .nitpick/001.json + 001.png
+  Ctrl+Shift+. (period)  →  click element  →  annotate + comment  →  .nitpick/001.json + 001.png
                                                                       │
                             /nitpick:process  ◀───────────────────────┘
                             Claude reads each item, opens the source line, fixes it.
@@ -58,7 +58,7 @@ Nothing Nitpick adds runs in production — the overlay and the route both hard-
 ## Use it
 
 1. Run your app: `npm run dev`.
-2. Press **`Ctrl+Shift+Q`**. The screen dims into pick mode.
+2. Press **`Ctrl+Shift+. (period)`**. The screen dims into pick mode.
 3. **Hover** — each element highlights and shows its component + source path.
 4. **Click** the element you want to report.
 5. **Annotate**: circle / arrow / freehand, type your comment, and `Ctrl+V` a reference
@@ -74,6 +74,21 @@ Then, in Claude Code:
 
 Claude reads the queue, views each annotated screenshot, opens the captured source line, and
 fixes the issues one by one — marking each resolved as it goes.
+
+### Change the hotkey
+
+The default is **`Ctrl+Shift+.`** (chosen to dodge browser/OS shortcuts like macOS
+`Cmd+Shift+Q` = Log Out). Override it by passing a `hotkey` prop where you mount the overlay —
+it's matched on the physical key (`event.code`), so it's keyboard-layout-proof:
+
+```tsx
+{process.env.NODE_ENV !== 'production' && (
+  <NitpickOverlay hotkey={{ alt: true, shift: true, code: 'KeyN' }} />
+)}
+```
+
+`code` accepts values like `'Period'`, `'Slash'`, `'Backquote'`, `'KeyN'`, `'Digit0'`;
+modifiers are `ctrl`, `meta` (Cmd/Win), `alt` (Option), and `shift`.
 
 ## How it finds the right line of code
 
@@ -105,12 +120,28 @@ screenshot of the element, and any reference image you pasted.
 
 ## Uninstall
 
+Nitpick is already inert in production (the overlay returns `null` and the route returns `410`
+when `NODE_ENV === 'production'`), so removal is about clean code, not safety. There are two
+independent parts:
+
+**1. Remove the scaffolded code from your app** — run the reverse of setup:
+
 ```shell
-/plugin uninstall nitpick@nitpick-tools
+/nitpick:remove          # deletes the overlay + route, un-mounts from the layout,
+                         # drops the .gitignore line, removes .nitpick/, uninstalls html-to-image
+# flags: --keep-feedback (keep .nitpick/), --keep-dep (keep html-to-image)
 ```
 
-To remove the scaffolded files from your app, delete `components/nitpick/`,
-`app/api/nitpick/`, the layout mount, and the `.nitpick/` directory.
+Or do it by hand: delete `components/nitpick/`, `app/api/nitpick/`, the `<NitpickOverlay />`
+mount in your layout, and the `.nitpick/` directory.
+
+**2. Remove the plugin from Claude Code:**
+
+```shell
+/plugin disable nitpick@nitpick-tools     # temporary — re-enable later with /plugin enable
+/plugin uninstall nitpick@nitpick-tools   # permanent
+/plugin marketplace remove nitpick-tools  # optional: forget the marketplace too
+```
 
 ## License
 

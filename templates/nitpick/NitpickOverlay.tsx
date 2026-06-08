@@ -3,7 +3,8 @@
 /**
  * Nitpick — in-app visual feedback overlay (dev-only).
  *
- * Press Ctrl+Shift+Q to enter pick mode. Hover to inspect, click to select an element, then
+ * Press Ctrl+Shift+. to enter pick mode (configurable via the `hotkey` prop). Hover to inspect,
+ * click to select an element, then
  * circle/arrow/draw on it, type a comment, optionally paste a reference image, and submit.
  * The report is POSTed to /api/nitpick, which writes it to `.nitpick/` for Claude to fix.
  *
@@ -18,6 +19,50 @@ import { resolveElementInfo, type ElementInfo } from './nitpick-source';
 const ACCENT = '#ff2d55';
 const Z = 2147483600; // just below max, above app chrome
 const ENDPOINT = '/api/nitpick';
+
+/**
+ * Activation hotkey. Matched on `event.code` (physical key) so it's independent of keyboard
+ * layout and of any character transform from Alt/Option. Default Ctrl+Shift+Period avoids the
+ * browser/OS shortcuts that plague Cmd/Ctrl + letter combos (notably Cmd+Shift+Q = Log Out on
+ * macOS). Override per-app: <NitpickOverlay hotkey={{ alt: true, shift: true, code: 'KeyN' }} />.
+ * `code` examples: 'Period', 'Slash', 'Backquote', 'KeyN', 'Digit0'.
+ */
+export interface Hotkey {
+  ctrl?: boolean;
+  meta?: boolean; // Cmd on macOS / Win key
+  alt?: boolean; // Option on macOS
+  shift?: boolean;
+  code: string;
+}
+const DEFAULT_HOTKEY: Hotkey = { ctrl: true, shift: true, code: 'Period' };
+
+function matchHotkey(e: KeyboardEvent, h: Hotkey): boolean {
+  return (
+    e.code === h.code &&
+    e.ctrlKey === !!h.ctrl &&
+    e.metaKey === !!h.meta &&
+    e.altKey === !!h.alt &&
+    e.shiftKey === !!h.shift
+  );
+}
+
+function hotkeyLabel(h: Hotkey): string {
+  const isMac =
+    typeof navigator !== 'undefined' &&
+    /Mac|iP(hone|ad|od)/.test(navigator.platform || navigator.userAgent || '');
+  const key = h.code.startsWith('Key')
+    ? h.code.slice(3)
+    : h.code.startsWith('Digit')
+      ? h.code.slice(5)
+      : ({ Period: '.', Comma: ',', Slash: '/', Semicolon: ';', Backquote: '`', Quote: "'" } as Record<string, string>)[h.code] || h.code;
+  const parts: string[] = [];
+  if (h.ctrl) parts.push('Ctrl');
+  if (h.meta) parts.push(isMac ? 'Cmd' : 'Win');
+  if (h.alt) parts.push(isMac ? 'Option' : 'Alt');
+  if (h.shift) parts.push('Shift');
+  parts.push(key);
+  return parts.join('+');
+}
 
 type Tool = 'circle' | 'arrow' | 'pen';
 type Mode = 'idle' | 'picking' | 'annotating';
@@ -183,13 +228,13 @@ function labelFor(el: Element, info: ElementInfo): string {
 
 // ---------------------------------------------------------------------------- component
 
-export default function NitpickOverlay() {
+export default function NitpickOverlay({ hotkey }: { hotkey?: Hotkey } = {}) {
   // No hooks here: keeps rules-of-hooks happy while fully excluding prod.
   if (process.env.NODE_ENV === 'production') return null;
-  return <NitpickOverlayInner />;
+  return <NitpickOverlayInner hotkey={hotkey ?? DEFAULT_HOTKEY} />;
 }
 
-function NitpickOverlayInner() {
+function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
   const [mounted, setMounted] = useState(false);
   const [mode, setMode] = useState<Mode>('idle');
   const [hovered, setHovered] = useState<{ rect: DOMRect; label: string } | null>(null);
@@ -224,10 +269,10 @@ function NitpickOverlayInner() {
 
   useEffect(() => setMounted(true), []);
 
-  // Global hotkeys: Ctrl+Shift+Q toggles, Esc cancels.
+  // Global hotkeys: the configured combo toggles pick mode, Esc cancels.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.ctrlKey && e.shiftKey && (e.key === 'q' || e.key === 'Q')) {
+      if (matchHotkey(e, hotkey)) {
         e.preventDefault();
         setMode((m) => (m === 'idle' ? 'picking' : 'idle'));
         if (mode !== 'idle') reset();
@@ -238,7 +283,7 @@ function NitpickOverlayInner() {
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [mode, reset]);
+  }, [mode, reset, hotkey]);
 
   // Pick mode: inspect on hover, freeze on click.
   useEffect(() => {
@@ -406,11 +451,16 @@ function NitpickOverlayInner() {
 
   const content = (
     <div data-nitpick-ui="root" style={{ position: 'fixed', inset: 0, zIndex: Z, pointerEvents: 'none', fontFamily: 'ui-sans-serif, system-ui, sans-serif' }}>
-      {/* IDLE: tiny launcher hint */}
+      {/* IDLE: clickable launcher (also shows the keyboard shortcut) */}
       {mode === 'idle' && (
-        <div data-nitpick-ui style={{ position: 'fixed', bottom: 12, right: 12, padding: '6px 10px', borderRadius: 8, fontSize: 11, color: '#fff', background: 'rgba(20,20,22,0.78)', boxShadow: '0 2px 10px rgba(0,0,0,0.3)', pointerEvents: 'none' }}>
-          📍 Nitpick · <b>Ctrl+Shift+Q</b>
-        </div>
+        <button
+          data-nitpick-ui
+          onClick={() => setMode('picking')}
+          title="Activate Nitpick — click an element to report a UI issue"
+          style={{ position: 'fixed', bottom: 12, right: 12, padding: '7px 11px', borderRadius: 8, fontSize: 11, color: '#fff', background: 'rgba(20,20,22,0.82)', boxShadow: '0 2px 10px rgba(0,0,0,0.3)', border: 'none', cursor: 'pointer', pointerEvents: 'auto', fontFamily: 'inherit' }}
+        >
+          📍 Nitpick · <b>{hotkeyLabel(hotkey)}</b>
+        </button>
       )}
 
       {/* PICKING: hover highlight + crosshair label */}
