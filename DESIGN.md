@@ -130,8 +130,58 @@ about." Best-effort: if `html-to-image` is absent or throws, we still send vecto
 - The API route **refuses** to run in production (returns 404/410) so it never ships writable.
 - All writes are confined to `.nitpick/` under the project root.
 
+## BMAD integration
+
+Nitpick stays a *reporting* tool; how a report gets fixed is pluggable. By default
+`/nitpick:process` fixes items directly in Claude. When a project uses
+[BMAD-METHOD](https://github.com/bmad-code-org/BMAD-METHOD), feedback should instead flow through
+BMAD's agents, with **two dispositions** the triager assigns per item:
+
+- **`quick-fix`** — small, obvious, safe-now items handed straight to the BMAD **dev** agent
+  (bmad-dev) to implement immediately.
+- **`backlog`** — items parked until the relevant EPIC completes, then triaged into BMAD
+  **stories** so the dev agent picks them up through the normal flow.
+
+### Data model additions (backward compatible)
+
+Each `.nitpick/<id>.json` (and its `queue.json` entry) may carry:
+
+```jsonc
+"disposition": "quick-fix" | "backlog" | null,   // null = untriaged
+"bmadStory": "docs/stories/3.4.ui-card-padding.md" | null,  // set when a story is created
+"epic": "3" | null                               // optional: which epic this belongs under
+```
+
+Absent fields mean "untriaged" — older reports keep working.
+
+### Two integration surfaces (the "both" agent form)
+
+1. **Plugin-side Claude Code subagent** `agents/nitpick-bmad.md` — version-independent. Detects
+   BMAD in the repo, triages `.nitpick/` items into quick-fix vs backlog, hands quick-fixes to
+   the dev agent, and converts backlog items into stories on request. Works even if BMAD isn't
+   wired as Claude commands. Entry point: `/nitpick:bmad`.
+2. **BMAD-native agent** `templates/bmad/nitpick-skill.md` — installed by `/nitpick:setup-bmad`,
+   which detects the BMAD version and installs the matching artifact:
+   - **v6** (verified against BMAD 6.8.0): a Claude **skill** at `.claude/skills/bmad-nitpick/`
+     that routes quick-fix → the `bmad-quick-dev` skill and backlog → `bmad-create-story`
+     (output under `_bmad-output/implementation-artifacts`, per `_bmad/bmm/config.yaml`).
+   - **v4** (legacy): a persona agent file under `.bmad-core/agents/`.
+   The installer reads the project's existing skills/agents to match the exact format rather than
+   assuming.
+
+### Routing rules
+
+- `/nitpick:process` detects BMAD (`.bmad-core/`, `bmad-core/`, or BMAD agent commands under
+  `.claude/commands/`). If found, it does **not** silently edit code — it points to
+  `/nitpick:bmad` (or asks) so fixes go through the chosen BMAD path. With no BMAD, it fixes
+  directly as before.
+- Nitpick only ever **writes `.nitpick/` and BMAD story files** (when asked); it never bypasses
+  the dev agent to change app code under BMAD unless the user picks the direct-fix path.
+
 ## Roadmap
 
 - **v1 (this):** hotkey → pick → annotate → comment → reference image → file bridge → skill fix loop.
+- **v1.1:** BMAD integration — `/nitpick:bmad`, the `nitpick-bmad` subagent, quick-fix vs
+  backlog dispositions, and a BMAD-native agent file.
 - **v2:** MCP live-push (no "go process" step), multi-element batches, native Screen Capture
-  API option, a small in-terminal review/triage UI, optional auto-trigger on new items.
+  API option, a small in-terminal review/triage UI, React SPA (Vite/CRA) bridge.

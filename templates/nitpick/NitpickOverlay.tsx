@@ -267,22 +267,56 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
     drawStart.current = null;
   }, []);
 
-  useEffect(() => setMounted(true), []);
-
-  // Global hotkeys: the configured combo toggles pick mode, Esc cancels.
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
+    setMounted(true);
+    // One-time readiness hint so you can confirm the overlay loaded.
+    // eslint-disable-next-line no-console
+    console.info(
+      `[Nitpick] ready — press ${hotkeyLabel(hotkey)} or double-tap Shift, or click the badge (bottom-right).`,
+    );
+  }, [hotkey]);
+
+  // Activation. Three ways in, so at least one always works regardless of OS/browser shortcuts:
+  //   1. the configured combo (default Ctrl+Shift+.),
+  //   2. double-tap Shift (rarely intercepted by anything),
+  //   3. the clickable badge (rendered below).
+  // Activation only ENTERS pick mode or exits from picking — it never fires while annotating,
+  // so it can't discard an in-progress report. Esc / Cancel exit annotation mode.
+  useEffect(() => {
+    let lastShiftUp = 0;
+    const toggle = () =>
+      setMode((m) => (m === 'idle' ? 'picking' : m === 'picking' ? 'idle' : m));
+
+    const onKeyDown = (e: KeyboardEvent) => {
       if (matchHotkey(e, hotkey)) {
         e.preventDefault();
-        setMode((m) => (m === 'idle' ? 'picking' : 'idle'));
-        if (mode !== 'idle') reset();
-      } else if (e.key === 'Escape' && mode !== 'idle') {
+        toggle();
+        return;
+      }
+      if (e.key === 'Escape' && mode !== 'idle') {
         e.preventDefault();
         reset();
+        return;
+      }
+      // Any non-Shift key cancels an in-progress double-tap.
+      if (e.key !== 'Shift') lastShiftUp = 0;
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.key !== 'Shift') return;
+      const now = Date.now();
+      if (now - lastShiftUp > 40 && now - lastShiftUp < 450) {
+        lastShiftUp = 0;
+        if (mode === 'idle') setMode('picking'); // double-tap only enters, never discards work
+      } else {
+        lastShiftUp = now;
       }
     };
-    window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
+    window.addEventListener('keydown', onKeyDown, true);
+    window.addEventListener('keyup', onKeyUp, true);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown, true);
+      window.removeEventListener('keyup', onKeyUp, true);
+    };
   }, [mode, reset, hotkey]);
 
   // Pick mode: inspect on hover, freeze on click.
@@ -456,7 +490,7 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
         <button
           data-nitpick-ui
           onClick={() => setMode('picking')}
-          title="Activate Nitpick — click an element to report a UI issue"
+          title={`Activate Nitpick — ${hotkeyLabel(hotkey)} or double-tap Shift, then click an element to report a UI issue`}
           style={{ position: 'fixed', bottom: 12, right: 12, padding: '7px 11px', borderRadius: 8, fontSize: 11, color: '#fff', background: 'rgba(20,20,22,0.82)', boxShadow: '0 2px 10px rgba(0,0,0,0.3)', border: 'none', cursor: 'pointer', pointerEvents: 'auto', fontFamily: 'inherit' }}
         >
           📍 Nitpick · <b>{hotkeyLabel(hotkey)}</b>

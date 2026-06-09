@@ -21,6 +21,31 @@ First cut. The full loop, end to end:
   layout, drops the gitignore line, and removes `.nitpick/` and the `html-to-image` dep
   (`--keep-feedback` / `--keep-dep` to retain either).
 
+### BMAD-METHOD integration
+
+- **Two dispositions** per item — `quick-fix` (hand to the BMAD dev agent now) and `backlog`
+  (turn into BMAD stories after the relevant epic). Backward-compatible `disposition` / `epic` /
+  `bmadStory` fields on each report.
+- **`/nitpick:bmad`** — triage open feedback and route it (`triage` / `quick-fix <id>` /
+  `backlog <id>` / `stories <epic>` / `status`).
+- **`nitpick-bmad` agent** — version-independent Claude Code subagent that detects BMAD, reads
+  its conventions (agent ids, story location/template), and coordinates the handoff without
+  editing app code itself.
+- **`/nitpick:setup-bmad`** + **`templates/bmad/nitpick-skill.md`** — installs a BMAD-native
+  Nitpick agent, version-aware: on **BMAD v6** a skill at `.claude/skills/bmad-nitpick/` (routes
+  quick-fix → `bmad-quick-dev`, backlog → `bmad-create-story`); on **v4** an agent file under
+  `.bmad-core/agents/`. Reads existing agents/skills to match the exact format.
+- **`/nitpick:process`** now detects BMAD and defers to `/nitpick:bmad` instead of editing code
+  behind the team's process.
+- Verified against a real **BMAD-METHOD v6.8.0** install (skills-based layout under `_bmad/` +
+  `.claude/skills/bmad-*`, output to `_bmad-output/`).
+
+### Activation
+
+- Three ways in (so OS/browser shortcuts can't fully block it): the configurable combo, a
+  **double-tap of Shift**, and the clickable badge. Activation never fires mid-annotation, so it
+  can't discard an in-progress report. Logs `[Nitpick] ready …` on load.
+
 ### Verified
 
 - Plugin + marketplace manifests pass `claude plugin validate --strict`.

@@ -10,6 +10,12 @@ agent-side of Nitpick — follow the **resolving-ui-feedback** skill's workflow.
 
 ## Do this
 
+0. **Check for BMAD first.** If the repo uses BMAD-METHOD (a `.bmad-core/` / `bmad-core/` /
+   `.bmad/` directory, or BMAD agent commands under `.claude/commands/`), do **not** edit app
+   code directly. Tell the user this project uses BMAD and route the feedback through it with
+   **`/nitpick:bmad`** (or the `nitpick-bmad` agent) so fixes go via the dev agent / stories.
+   Only continue with direct fixing below if there's no BMAD, or the user explicitly asks you to
+   fix directly anyway.
 1. Read `.nitpick/queue.json` in the project root.
    - If it's missing or has no `open` items, tell the user there's nothing queued and remind
      them to capture issues with **Ctrl+Shift+. (period)** in their running app. Stop.

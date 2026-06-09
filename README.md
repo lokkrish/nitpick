@@ -20,6 +20,10 @@ your feedback queue, fixing each item at its source.
 
 ---
 
+> **See how it works:** open [`docs/index.html`](./docs/index.html) — an explainer with a live
+> (simulated) capture demo and Install / Usage / Decommission steps for both modes (Claude-only
+> and with BMAD).
+
 ## Install
 
 Nitpick installs from this GitHub repo as a Claude Code plugin marketplace.
@@ -89,6 +93,30 @@ it's matched on the physical key (`event.code`), so it's keyboard-layout-proof:
 
 `code` accepts values like `'Period'`, `'Slash'`, `'Backquote'`, `'KeyN'`, `'Digit0'`;
 modifiers are `ctrl`, `meta` (Cmd/Win), `alt` (Option), and `shift`.
+
+## Use with BMAD-METHOD
+
+If your project uses [BMAD-METHOD](https://github.com/bmad-code-org/BMAD-METHOD), Nitpick routes
+feedback through BMAD's agents instead of editing code directly — it stays a *reporting* tool and
+lets the **dev** agent do the work.
+
+```shell
+/nitpick:bmad          # triage open feedback, then route it
+```
+
+Each item is triaged into one of two dispositions:
+
+- **quick-fix** → handed straight to the BMAD **dev** agent to implement now;
+- **backlog** → parked until the relevant epic is done, then `/nitpick:bmad stories <epic>`
+  turns those items into BMAD **stories** the dev agent picks up via the normal flow.
+
+`/nitpick:process` auto-detects BMAD and points you to `/nitpick:bmad` rather than editing code
+behind the team's process. Two integration surfaces ship:
+
+- the **`nitpick-bmad`** Claude Code agent (works with any BMAD version), and
+- a **BMAD-native agent** — run `/nitpick:setup-bmad` to install Nitpick into `.bmad-core/agents/`
+  (it reads your existing agents to match your BMAD version's format) so you activate it like any
+  other BMAD agent.
 
 ## How it finds the right line of code
 

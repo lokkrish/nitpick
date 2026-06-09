@@ -1,0 +1,357 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Nitpick — point at a UI bug, get a source-located fix</title>
+  <meta name="description" content="Nitpick is a Claude Code plugin: report UI issues in a running Next.js app by pointing at the element, and turn each into a precise, source-located fix — solo with Claude, or routed through BMAD." />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet" />
+  <style>
+    :root { --np: #ff2d55; }
+    html { scroll-behavior: smooth; }
+    body { scroll-padding-top: 4.5rem; }
+    .np-accent { color: var(--np); }
+    .btn-np { background: var(--np); color: #fff; border: none; }
+    .btn-np:hover, .btn-np:focus { background: #e02547; color: #fff; }
+    .text-np { color: var(--np); }
+    .hero { background: radial-gradient(1100px 420px at 50% -15%, rgba(255,45,85,.22), transparent), #0b0b0f; color: #fff; }
+    .step-num { width: 2rem; height: 2rem; border-radius: 50%; background: var(--np); color: #fff; display: inline-flex; align-items: center; justify-content: center; font-weight: 700; flex: 0 0 auto; }
+    .feature-ico { font-size: 1.6rem; color: var(--np); }
+    pre.cmd { background: #0b0b0f; color: #e8e8e8; border-radius: 10px; padding: 1rem 1.1rem; font-size: .85rem; overflow: auto; }
+    pre.cmd .c { color: #8a8f98; }
+    /* demo */
+    #demoApp { position: relative; border: 1px solid #e6e6e6; border-radius: 14px; background: #fff; }
+    #demoApp.np-active { box-shadow: 0 0 0 3px rgba(255,45,85,.3) inset; }
+    #demoApp.np-active [data-el] { cursor: crosshair; }
+    #demoApp.np-active [data-el]:hover { outline: 2px solid var(--np); outline-offset: 3px; border-radius: 4px; }
+    .np-selected { outline: 2px solid var(--np) !important; outline-offset: 3px; border-radius: 4px; }
+    .np-json { background: #0b0b0f; color: #e8e8e8; border-radius: 10px; padding: .8rem; font-size: .76rem; overflow: auto; margin: 0; }
+    .np-badge { position: absolute; right: 10px; bottom: 10px; }
+    .disp-quick { color: #1a7f37; } .disp-backlog { color: #9a6700; }
+  </style>
+</head>
+<body>
+
+<!-- nav -->
+<nav class="navbar navbar-expand-lg navbar-dark bg-dark sticky-top">
+  <div class="container">
+    <a class="navbar-brand fw-bold" href="#top">📍 Nitpick</a>
+    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#nav"><span class="navbar-toggler-icon"></span></button>
+    <div class="collapse navbar-collapse" id="nav">
+      <ul class="navbar-nav ms-auto">
+        <li class="nav-item"><a class="nav-link" href="#how">How it works</a></li>
+        <li class="nav-item"><a class="nav-link" href="#demo">Live demo</a></li>
+        <li class="nav-item"><a class="nav-link" href="#get-started">Get started</a></li>
+        <li class="nav-item"><a class="nav-link" href="#commands">Commands</a></li>
+      </ul>
+    </div>
+  </div>
+</nav>
+
+<!-- hero -->
+<header id="top" class="hero py-5">
+  <div class="container py-4 text-center">
+    <h1 class="display-4 fw-bold">Point at a UI bug.<br><span class="text-np">Get a source-located fix.</span></h1>
+    <p class="lead mt-3 mx-auto" style="max-width: 720px;">
+      Nitpick is a Claude Code plugin for Next.js. Press a hotkey in your running dev app, circle the
+      element that's wrong, say what's off — and each report arrives mapped to the exact component &amp;
+      source line, with a screenshot. Then Claude (or your BMAD dev agent) fixes them one by one.
+    </p>
+    <div class="d-flex gap-2 justify-content-center flex-wrap mt-4">
+      <a href="#get-started" class="btn btn-np btn-lg px-4">Get started</a>
+      <a href="#demo" class="btn btn-outline-light btn-lg px-4">Try the demo</a>
+    </div>
+    <p class="mt-4 mb-0 small text-white-50">
+      Activate with <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>.</kbd> · double-tap <kbd>Shift</kbd> · or the on-screen badge
+    </p>
+  </div>
+</header>
+
+<!-- how it works -->
+<section id="how" class="py-5">
+  <div class="container">
+    <h2 class="fw-bold text-center mb-2">How it works</h2>
+    <p class="text-center text-muted mb-5">Two pieces joined by a file bridge — reporting stays separate from fixing.</p>
+    <div class="row g-4">
+      <div class="col-md-4">
+        <div class="card h-100 border-0 shadow-sm"><div class="card-body">
+          <i class="bi bi-cursor-fill feature-ico"></i>
+          <h5 class="mt-3">1 · Capture (in the browser)</h5>
+          <p class="text-muted mb-0">A dev-only overlay lives in your Next.js app. Activate it, hover to inspect, click the broken element, annotate (circle / arrow / draw) and add a comment or reference image.</p>
+        </div></div>
+      </div>
+      <div class="col-md-4">
+        <div class="card h-100 border-0 shadow-sm"><div class="card-body">
+          <i class="bi bi-folder2-open feature-ico"></i>
+          <h5 class="mt-3">2 · Queue (on disk)</h5>
+          <p class="text-muted mb-0">A dev-only API route writes each report to <code>.nitpick/NNN.json</code> + an annotated <code>NNN.png</code> — including the component, selector, styles and source line. Nothing leaves your machine.</p>
+        </div></div>
+      </div>
+      <div class="col-md-4">
+        <div class="card h-100 border-0 shadow-sm"><div class="card-body">
+          <i class="bi bi-wrench-adjustable-circle feature-ico"></i>
+          <h5 class="mt-3">3 · Fix (in Claude Code)</h5>
+          <p class="text-muted mb-0"><code>/nitpick:process</code> reads the queue, views each screenshot, opens the source line and fixes it — or, in a BMAD project, routes each item to the dev agent / into stories.</p>
+        </div></div>
+      </div>
+    </div>
+    <p class="text-center text-muted small mt-4 mb-0">
+      <i class="bi bi-shield-check text-np"></i>
+      Report-only &amp; dev-only: the overlay returns <code>null</code> and the route returns <code>410</code> in production — it never changes your app's behavior.
+    </p>
+  </div>
+</section>
+
+<!-- live demo -->
+<section id="demo" class="py-5 bg-light">
+  <div class="container">
+    <h2 class="fw-bold text-center mb-2">See it (simulated)</h2>
+    <p class="text-center text-muted mb-4">A tiny stand-in for the real overlay. Click <b>Activate</b> (or press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>.</kbd> / double-tap <kbd>Shift</kbd>), then click an element below, add a comment, and Save.</p>
+    <div class="row g-4 align-items-start">
+      <!-- mock app -->
+      <div class="col-lg-7">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <span class="badge text-bg-secondary">localhost:3000</span>
+          <button id="npActivate" class="btn btn-sm btn-np"><i class="bi bi-magic"></i> Activate Nitpick</button>
+        </div>
+        <div id="demoApp" class="p-4">
+          <div data-el data-name="Logo" data-comp="Header" data-selector="header > img.logo" class="fw-bold fs-4 mb-3">ACME<span class="text-np">.</span></div>
+          <h3 data-el data-name="Heading" data-comp="Hero" data-selector="main > h1" class="h4">Welcome back, Sam</h3>
+          <p data-el data-name="Subtext" data-comp="Hero" data-selector="main > p" class="text-muted">Here's what's happening with your projects today.</p>
+          <button data-el data-name="CTA" data-comp="Hero" data-selector="main button.cta" class="btn btn-np mt-2">Upgrade plan</button>
+          <div data-el data-name="Banner" data-comp="Promo" data-selector="section.promo" class="mt-4 p-4 rounded text-center text-muted" style="border:2px dashed #ccc;">Promo banner area</div>
+          <span class="np-badge badge text-bg-dark d-none" id="npBanner">📍 click an element · Esc to cancel</span>
+        </div>
+      </div>
+      <!-- panel + captured -->
+      <div class="col-lg-5">
+        <div id="npPanel" class="card shadow-sm mb-3 d-none">
+          <div class="card-body">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+              <strong>📍 Report issue</strong>
+              <small class="text-muted" id="npTarget"></small>
+            </div>
+            <div class="btn-group btn-group-sm mb-2" role="group">
+              <button class="btn btn-outline-secondary" id="npCircle"><i class="bi bi-circle"></i> Circle</button>
+            </div>
+            <textarea id="npComment" class="form-control form-control-sm mb-2" rows="3" placeholder="What's wrong? e.g. heading too small on mobile; should match the reference"></textarea>
+            <div class="d-flex gap-2">
+              <button class="btn btn-sm btn-outline-secondary" id="npCancel">Cancel</button>
+              <button class="btn btn-sm btn-np flex-grow-1" id="npSave">Save feedback</button>
+            </div>
+          </div>
+        </div>
+        <h6 class="text-muted text-uppercase small">Captured → <code>.nitpick/</code></h6>
+        <div id="npCaptured"><p data-empty class="text-muted small fst-italic">Nothing captured yet — activate and click an element.</p></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- get started -->
+<section id="get-started" class="py-5">
+  <div class="container">
+    <h2 class="fw-bold text-center mb-2">Get started</h2>
+    <p class="text-center text-muted mb-4">Pick your workflow. Replace <code>&lt;your-github-username&gt;</code> with the repo you install from (or use a local path).</p>
+
+    <ul class="nav nav-pills justify-content-center mb-4" id="modeTabs" role="tablist">
+      <li class="nav-item"><button class="nav-link active" data-bs-toggle="pill" data-bs-target="#solo" type="button">Claude only (standalone)</button></li>
+      <li class="nav-item"><button class="nav-link" data-bs-toggle="pill" data-bs-target="#bmad" type="button">With BMAD</button></li>
+    </ul>
+
+    <div class="tab-content">
+      <!-- SOLO -->
+      <div class="tab-pane fade show active" id="solo">
+        <div class="row g-4">
+          <div class="col-lg-4">
+            <h5><span class="step-num me-2">1</span>Install</h5>
+            <pre class="cmd"><span class="c"># in Claude Code</span>
+/plugin marketplace add &lt;your-github-username&gt;/nitpick
+/plugin install nitpick@nitpick-tools
+
+<span class="c"># in your Next.js project</span>
+/nitpick:setup
+<span class="c"># scaffolds the overlay + dev API route,</span>
+<span class="c"># mounts it in the root layout (all pages),</span>
+<span class="c"># gitignores .nitpick/, installs html-to-image</span>
+
+npm run dev   <span class="c"># (re)start the dev server</span></pre>
+          </div>
+          <div class="col-lg-4">
+            <h5><span class="step-num me-2">2</span>Usage</h5>
+            <ol class="text-muted small ps-3">
+              <li class="mb-2">Run your app (<code>npm run dev</code>).</li>
+              <li class="mb-2">Activate the overlay: <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>.</kbd>, double-tap <kbd>Shift</kbd>, or click the badge.</li>
+              <li class="mb-2">Hover → click the broken element → annotate + comment → optional reference image → <b>Save</b>.</li>
+              <li class="mb-2">Repeat; reports queue in <code>.nitpick/</code>.</li>
+              <li>In Claude Code, run <code>/nitpick:process</code> — it views each screenshot, opens the source line, fixes it, and marks it resolved.</li>
+            </ol>
+          </div>
+          <div class="col-lg-4">
+            <h5><span class="step-num me-2">3</span>Decommission</h5>
+            <pre class="cmd"><span class="c"># remove scaffolded code from the app</span>
+/nitpick:remove
+<span class="c"># flags: --keep-feedback  --keep-dep</span>
+
+<span class="c"># remove the plugin from Claude Code</span>
+/plugin uninstall nitpick@nitpick-tools
+/plugin marketplace remove nitpick-tools</pre>
+            <p class="text-muted small mt-2"><i class="bi bi-info-circle"></i> Already inert in production, so removal is cleanup, not safety.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- BMAD -->
+      <div class="tab-pane fade" id="bmad">
+        <p class="text-muted small text-center mb-4">Same capture overlay, but fixes are <b>routed through BMAD's agents</b> instead of edited directly. Verified against BMAD-METHOD v6.</p>
+        <div class="row g-4">
+          <div class="col-lg-4">
+            <h5><span class="step-num me-2">1</span>Install</h5>
+            <pre class="cmd"><span class="c"># in Claude Code</span>
+/plugin marketplace add &lt;your-github-username&gt;/nitpick
+/plugin install nitpick@nitpick-tools
+
+<span class="c"># overlay (same as standalone)</span>
+/nitpick:setup
+npm run dev
+
+<span class="c"># add the BMAD-native agent</span>
+/nitpick:setup-bmad
+<span class="c"># v6 → installs the bmad-nitpick skill</span>
+<span class="c">#       (.claude/skills/bmad-nitpick)</span>
+<span class="c"># then reload Claude Code</span></pre>
+          </div>
+          <div class="col-lg-4">
+            <h5><span class="step-num me-2">2</span>Usage</h5>
+            <ol class="text-muted small ps-3">
+              <li class="mb-2">Capture issues with the overlay (as standalone).</li>
+              <li class="mb-2">Run <code>/nitpick:bmad</code> or activate the <b>bmad-nitpick</b> skill (“triage nitpick”).</li>
+              <li class="mb-2"><b>Triage</b> each item:
+                <ul class="ps-3 mt-1">
+                  <li><span class="disp-quick fw-semibold">quick-fix</span> → handed to <code>bmad-quick-dev</code> to implement now.</li>
+                  <li><span class="disp-backlog fw-semibold">backlog</span> → parked until the epic is done.</li>
+                </ul>
+              </li>
+              <li>After an epic: <code>/nitpick:bmad stories &lt;epic&gt;</code> turns backlog items into BMAD stories (<code>bmad-create-story</code>) for the dev agent.</li>
+            </ol>
+          </div>
+          <div class="col-lg-4">
+            <h5><span class="step-num me-2">3</span>Decommission</h5>
+            <pre class="cmd"><span class="c"># remove the BMAD-native agent</span>
+<span class="c"># v6:</span>
+rm -rf .claude/skills/bmad-nitpick \
+       .agents/skills/bmad-nitpick
+<span class="c"># v4: delete .bmad-core/agents/nitpick.md</span>
+
+<span class="c"># then the overlay + plugin</span>
+/nitpick:remove
+/plugin uninstall nitpick@nitpick-tools</pre>
+            <p class="text-muted small mt-2"><i class="bi bi-info-circle"></i> Removing the skill leaves your BMAD install otherwise untouched.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- commands -->
+<section id="commands" class="py-5 bg-light">
+  <div class="container">
+    <h2 class="fw-bold text-center mb-4">Command reference</h2>
+    <div class="table-responsive">
+      <table class="table table-bordered bg-white align-middle">
+        <thead class="table-dark"><tr><th>Command</th><th>What it does</th><th>Mode</th></tr></thead>
+        <tbody>
+          <tr><td><code>/nitpick:setup</code></td><td>Scaffold the overlay + dev API route into a Next.js app (all pages).</td><td>Both</td></tr>
+          <tr><td><code>/nitpick:process</code></td><td>Fix the <code>.nitpick/</code> queue directly in Claude (defers to BMAD if detected).</td><td>Claude</td></tr>
+          <tr><td><code>/nitpick:bmad</code></td><td>Triage feedback &amp; route it: <code>triage</code> · <code>quick-fix &lt;id&gt;</code> · <code>backlog &lt;id&gt;</code> · <code>stories &lt;epic&gt;</code> · <code>status</code>.</td><td>BMAD</td></tr>
+          <tr><td><code>/nitpick:setup-bmad</code></td><td>Install the BMAD-native Nitpick agent (v6 skill / v4 agent).</td><td>BMAD</td></tr>
+          <tr><td><code>/nitpick:remove</code></td><td>Reverse setup: remove overlay, route, mount, <code>.nitpick/</code> &amp; dep.</td><td>Both</td></tr>
+          <tr><td><code>nitpick-bmad</code> <span class="badge text-bg-secondary">agent</span></td><td>Subagent that detects BMAD &amp; coordinates the handoff.</td><td>BMAD</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<footer class="py-4 text-center text-muted small border-top">
+  <div class="container">
+    📍 Nitpick — visual UI feedback for Claude Code &amp; BMAD · MIT ·
+    <span class="text-muted">This page is an explainer; the real overlay runs inside your Next.js dev app.</span>
+  </div>
+</footer>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+  (function () {
+    var demo = document.getElementById('demoApp');
+    var banner = document.getElementById('npBanner');
+    var panel = document.getElementById('npPanel');
+    var captured = document.getElementById('npCaptured');
+    var commentEl = document.getElementById('npComment');
+    var targetEl = document.getElementById('npTarget');
+    var circleBtn = document.getElementById('npCircle');
+    var active = false, selected = null, circle = false, nextId = 1;
+
+    function activate() { active = true; demo.classList.add('np-active'); banner.classList.remove('d-none'); }
+    function clearSel() { if (selected) selected.classList.remove('np-selected'); selected = null; }
+    function closePanel() { panel.classList.add('d-none'); commentEl.value = ''; circle = false; circleBtn.classList.remove('active'); }
+    function deactivate() { active = false; demo.classList.remove('np-active'); banner.classList.add('d-none'); closePanel(); clearSel(); }
+
+    document.getElementById('npActivate').addEventListener('click', function () { active ? deactivate() : activate(); });
+    circleBtn.addEventListener('click', function () { circle = !circle; circleBtn.classList.toggle('active', circle); });
+    document.getElementById('npCancel').addEventListener('click', function () { closePanel(); clearSel(); });
+    document.getElementById('npSave').addEventListener('click', save);
+
+    demo.addEventListener('click', function (e) {
+      if (!active) return;
+      var el = e.target.closest('[data-el]');
+      if (!el || !demo.contains(el)) return;
+      e.preventDefault();
+      clearSel();
+      selected = el; el.classList.add('np-selected');
+      targetEl.textContent = '<' + (el.dataset.comp || el.tagName.toLowerCase()) + '> · ' + el.dataset.selector;
+      panel.classList.remove('d-none');
+      commentEl.focus();
+    });
+
+    function save() {
+      if (!selected) return;
+      var id = String(nextId++).padStart(3, '0');
+      var rec = {
+        id: id, status: 'open', comment: commentEl.value || '(no comment)', route: '/',
+        element: {
+          componentName: selected.dataset.comp || null,
+          selector: selected.dataset.selector,
+          tag: selected.tagName.toLowerCase(),
+          text: (selected.textContent || '').trim().slice(0, 40)
+        },
+        annotations: circle ? [{ type: 'circle' }] : [],
+        disposition: null
+      };
+      var empty = captured.querySelector('[data-empty]'); if (empty) empty.remove();
+      var pre = document.createElement('pre');
+      pre.className = 'np-json mb-2';
+      pre.textContent = JSON.stringify(rec, null, 2);
+      captured.prepend(pre);
+      deactivate();
+    }
+
+    // keyboard: Ctrl+Shift+. and double-tap Shift (mirrors the real overlay)
+    var lastShift = 0;
+    window.addEventListener('keydown', function (e) {
+      if (e.ctrlKey && e.shiftKey && e.code === 'Period') { e.preventDefault(); active ? deactivate() : activate(); }
+      else if (e.key === 'Escape' && active) { deactivate(); }
+      if (e.key !== 'Shift') lastShift = 0;
+    });
+    window.addEventListener('keyup', function (e) {
+      if (e.key !== 'Shift') return;
+      var n = Date.now();
+      if (n - lastShift > 40 && n - lastShift < 450) { lastShift = 0; if (!active) activate(); }
+      else lastShift = n;
+    });
+  })();
+</script>
+</body>
+</html>
