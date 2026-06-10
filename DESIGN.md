@@ -153,12 +153,13 @@ every mount, which could silently restart background recording after a crash and
 server heap. Now a fresh page load **abandons** any prior session (discards its server draft,
 clears keys), so the overlay is completely inert unless you actively use it.
 
-**Snip + "＋ Elements" (v2.2/2.3):** **Snip** crops a region and lets the user draw on the
-cropped image; those drawings are **baked into the image** (no coordinates stored) and saved as
-the screenshot. By default a snip is image + comment only (`targets: []`). The optional
-**＋ Elements** toggle (available in Draw and Snip) adds DOM context to the report: in **Draw**,
-the element each shape points at is captured into `targets`; in **Snip**, the elements sampled
-inside the region are captured. Off by default — opt in when the LLM needs the component details.
+**Snip (v2.2):** **Snip** crops a region and lets the user draw on the cropped image; those
+drawings are **baked into the image** (no coordinates stored) and saved as the screenshot. A snip
+is always image + comment only (`targets: []`). When the LLM needs DOM/component details for an
+element, use **Inspect** (which captures `targets[]` with Playwright-style locators).
+
+> The old **＋ Elements** toggle on Draw/Snip was removed in v0.3.1 — it sampled elements under a
+> mark, which was unreliable, and **Inspect** already covers that need precisely.
 
 ## The fix loop (`skills/resolving-ui-feedback/SKILL.md`)
 
@@ -178,6 +179,14 @@ page once via `html-to-image` on `document.documentElement`, then the canvas is 
 region (if any) and the vector annotations are composited on top — all in page coordinates, so
 they line up regardless of scroll. Capture is **best-effort**: if `html-to-image` is absent or
 throws, the report still saves with vector annotations + full metadata and stays actionable.
+
+**Scroll-safe capture (v0.3.1).** `html-to-image` renders `document.documentElement` from the
+page origin, but when the page is scrolled the captured content is shifted by the scroll amount —
+so on a long page, a snip/draw made after scrolling came out misaligned or blank. The shared
+`snapshotDoc(pr)` helper now **scrolls to the top for the capture and restores the exact scroll
+right after** (masked by a brief "📸 Capturing…" overlay), so page coordinates always line up
+with the image. The crop ratio is also budgeted against the **full** page height (`cappedRatio`)
+so the intermediate canvas stays within the browser's max-canvas size on very tall pages.
 
 A native HD path (`navigator.mediaDevices.getDisplayMedia`) would give pixel-perfect captures
 (and fix `html-to-image`'s blank-`next/image` quirk) at the cost of a per-use permission prompt

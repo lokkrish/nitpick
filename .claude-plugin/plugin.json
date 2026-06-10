@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "nitpick",
   "displayName": "Nitpick",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Capture UI issues visually in your running Next.js app with a hotkey (Ctrl+Shift+.), annotate the exact element, and turn each one into a precise, source-located fix for Claude — with first-class BMAD-METHOD support.",
   "author": {
     "name": "Lokeshwaran",

@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.3.1
+
+- **Fix: Snip / Draw captured a misaligned or blank image after scrolling down a long page.**
+  `html-to-image` renders `document.documentElement` from the page origin, but on a scrolled page
+  the captured content is shifted by the scroll amount — so a snip or drawing made below the fold
+  came out wrong (or empty). All captures now go through a shared `snapshotDoc()` that **scrolls to
+  the top for the shot and restores the exact scroll right after** (masked by a brief
+  "📸 Capturing…" overlay), so page coordinates always line up with the image.
+- **Fix: Snip could fail on very tall pages.** The region crop used an uncapped device pixel ratio,
+  so the intermediate full-page canvas could exceed the browser's max-canvas size. The ratio is now
+  budgeted against the full page height (`cappedRatio`), so it degrades resolution gracefully
+  instead of failing.
+- **Removed the "＋ Elements" toggle** from Draw and Snip. It sampled the DOM element(s) under a
+  mark, which was unreliable; **Inspect** already captures element targets (with Playwright-style
+  locators) precisely, so use that when the report needs component details. Snip is now always
+  image + comment only.
+
 ## 0.3.0 — public release 🎉
 
 First public, open-source release.
