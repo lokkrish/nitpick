@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.2.1 — unreleased
+
+Action recording + toolbox fixes.
+
+- **Record tool** — hides the overlay and logs clicks / inputs / submits / **navigation** in the
+  background. The flow is persisted in `sessionStorage`, so it **survives client-side and
+  full-page navigations** (the session rehydrates on mount) — actions truly span multiple
+  screens. Each action carries its URL + a Playwright-style locator; passwords are redacted.
+  New `actions[]` field in the report (persisted by both route handlers).
+- **Area** now snips that region and shows the cropped section as a thumbnail; Save stores just
+  that section.
+- **Removed the Circle/Ellipse tool** (kept legacy render support for old reports).
+- **Fixed:** Save could stick on "Saving…" — `submitting` is now reset on success/close/open and
+  in a `finally`, and screenshot capture has an 8s timeout so it can never hang.
+- **Fixed:** during **Inspect**, clicking the comment box (or any toolbox control) was swallowed
+  by the capture-phase blockers — they now exclude Nitpick's own UI, and Inspect stays active
+  after each pick so you can keep selecting and still type a comment.
+
+## 0.2.0 — unreleased
+
+Overlay v2 — a real annotation toolbox.
+
+- **Draggable toolbox** appears on activation (drag handle to move it anywhere).
+- **Draw anywhere** — Arrow, Pen (freehand), Rectangle, Ellipse — over the whole page, not tied
+  to an element. Annotations are stored in page coordinates and stay aligned while scrolling.
+- **Screenshots**: **Full** (whole page) or **Area** (drag a region) — annotations are composited
+  in; best-effort via `html-to-image`.
+- **Inspect** captures one or many elements (`targets[]`) with **Playwright-style locators**:
+  ARIA role + accessible name, `getByRole`/`getByText`/`getByTestId` suggestion, test-id, CSS,
+  XPath, and the element's opening tag — alongside the React source/component and computed styles.
+- **Free-form reports** (no element) are supported — a pure visual/region note.
+- Data contract gains `captureType`, `region`, `coordSpace`, and `targets[]`; `element` remains
+  as a `targets[0]` alias. Routes (App + Pages) and the fix skill updated accordingly.
+- Verified on Next 16.2.7 / React 19.2.4: `tsc` + `next build` pass; the route persists the new
+  fields end-to-end.
+- Known follow-up: native HD capture via `getDisplayMedia` (a v2.1 toggle); the static demo page
+  still shows the v1 single-element flow.
+
 ## 0.1.0 — unreleased
 
 First cut. The full loop, end to end:

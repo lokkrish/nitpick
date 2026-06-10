@@ -77,33 +77,61 @@ This is the interface between browser and agent — keep it stable.
   "createdAt": "2026-06-07T12:00:00.000Z",
   "comment": "Padding too tight; button overflows on mobile",
   "route": "/dashboard",
-  "viewport": { "width": 390, "height": 844, "dpr": 2 },
-  "element": {
-    "source": { "file": "components/Card.tsx", "line": 42, "column": 7 } | null,
-    "componentName": "Card",
-    "componentStack": ["Card", "DashboardGrid", "DashboardPage"],
-    "selector": "main > div.grid > div:nth-child(2)",
-    "tag": "div",
-    "id": "",
-    "classes": ["card", "p-2"],
-    "text": "Upgrade",
-    "dataAttributes": { "testid": "upgrade-card" },
-    "boundingBox": { "x": 12, "y": 200, "width": 180, "height": 64 },
-    "computedStyles": { "padding": "8px", "display": "flex", "...": "relevant subset" }
-  },
-  "annotations": [
-    // coords are normalized 0..1 relative to the element's bounding box, so they stay
-    // meaningful regardless of screenshot success ("circle at 80% across, 30% down").
-    { "type": "circle", "cx": 0.8, "cy": 0.3, "rx": 0.15, "ry": 0.2 },
-    { "type": "arrow", "x1": 0.1, "y1": 0.1, "x2": 0.5, "y2": 0.5 },
-    { "type": "pen", "points": [[0.1,0.2],[0.15,0.25]] }
+  "viewport": { "width": 390, "height": 844, "dpr": 2, "scrollX": 0, "scrollY": 120 },
+  "captureType": "full" | "region",       // screenshot scope chosen in the toolbox
+  "region": { "x": 12, "y": 200, "w": 360, "h": 180 } | null, // PAGE coords, when region
+  "coordSpace": "page",                   // annotations & boxes are PAGE coords (incl. scroll)
+  // `targets` = every element the user Inspected (0..n). `element` = targets[0] (back-compat).
+  "targets": [
+    {
+      "source": { "file": "components/Card.tsx", "line": 42, "column": 7 } | null,
+      "componentName": "Card",
+      "componentStack": ["Card", "DashboardGrid", "DashboardPage"],
+      "tag": "button", "id": "", "classes": ["cta"], "text": "Upgrade",
+      "dataAttributes": { "testid": "upgrade-card" },
+      "locators": {                       // Playwright-style, for precise targeting
+        "role": "button",
+        "name": "Upgrade",
+        "testId": { "attr": "data-testid", "value": "upgrade-card" } | null,
+        "getBy": "getByRole('button', { name: \"Upgrade\" })",
+        "css": "main > div.grid > button.cta",
+        "xpath": "/html/body/main/div[1]/button[1]",
+        "outerTag": "<button class=\"cta\" data-testid=\"upgrade-card\"></button>"
+      },
+      "boundingBox": { "x": 12, "y": 200, "w": 180, "h": 64 },
+      "computedStyles": { "padding": "8px", "display": "flex", "...": "relevant subset" }
+    }
   ],
-  "screenshot": "001.png",                // annotated element capture, or null if unavailable
+  "element": { /* = targets[0], or null for a free-form (no-element) report */ },
+  "annotations": [                        // free-form, drawn anywhere; PAGE coords (px)
+    { "type": "arrow", "x1": 40, "y1": 60, "x2": 220, "y2": 180 },
+    { "type": "rect", "x": 20, "y": 40, "w": 300, "h": 120 },
+    { "type": "pen", "pts": [[10,20],[15,25]] }
+  ],
+  // recorded interaction flow (Record tool) — spans screens, in order
+  "actions": [
+    { "type": "navigate", "at": "...", "url": "/" },
+    { "type": "click", "at": "...", "url": "/", "locator": { "getBy": "getByRole('link', { name: \"About\" })" }, "text": "About" },
+    { "type": "navigate", "at": "...", "url": "/about" },
+    { "type": "input", "at": "...", "url": "/about", "locator": { "getBy": "getByRole('textbox', { name: \"Email\" })" }, "value": "a@b.com" }
+  ],
+  "screenshot": "001.png",                // full-page or cropped region snip, annotations baked in; or null
   "referenceImage": "001-ref.png"         // optional, user-supplied
 }
 ```
 
 `.nitpick/queue.json` is the index: `{ "items": [{ "id", "status", "comment", "route" }], "nextId": 4 }`.
+
+**v2 note:** annotations are now free-form (drawable anywhere on the page, no element required)
+and stored in **page coordinates**. `targets` is a list because a report can reference zero or
+many elements; a report with `targets: []` is a pure visual/region note. `element` stays as a
+`targets[0]` alias for backward compatibility.
+
+**Actions recorder (v2.1):** the **Record** tool hides the overlay and logs the user's
+clicks / inputs / submits / navigations in the background, persisted in `sessionStorage` so the
+sequence **survives client-side and full-page navigations** (the overlay rehydrates the session
+on mount). Each action carries the URL + Playwright-style locator, so `actions` reads like a
+repro script the dev (or BMAD dev agent) can replay. Password inputs are redacted to `***`.
 
 ## The fix loop (`skills/resolving-ui-feedback/SKILL.md`)
 
@@ -116,13 +144,17 @@ Triggered by `/nitpick:process` or when the user mentions processing UI feedback
    one-line note of what changed.
 4. Move to the next; summarize at the end.
 
-## Why screenshots capture only the selected element
+## Screenshots (v2: full page or region)
 
-`html-to-image` snapshots a single DOM node cleanly. Capturing the **selected element** (not
-the whole page) means annotation coordinates — stored element-relative — composite onto the
-image with zero scroll/viewport math, and the picture is exactly "the thing being complained
-about." Best-effort: if `html-to-image` is absent or throws, we still send vector annotations
-+ full metadata, and the item stays fully actionable.
+The toolbox offers **Full** (whole page) and **Area** (drag a region) capture. Both render the
+page once via `html-to-image` on `document.documentElement`, then the canvas is cropped to the
+region (if any) and the vector annotations are composited on top — all in page coordinates, so
+they line up regardless of scroll. Capture is **best-effort**: if `html-to-image` is absent or
+throws, the report still saves with vector annotations + full metadata and stays actionable.
+
+A native HD path (`navigator.mediaDevices.getDisplayMedia`) would give pixel-perfect captures
+(and fix `html-to-image`'s blank-`next/image` quirk) at the cost of a per-use permission prompt
+— tracked as a v2.1 toggle, not the default.
 
 ## Safety / scope rules
 

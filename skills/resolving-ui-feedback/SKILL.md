@@ -33,16 +33,23 @@ correct code fix. (For how reports are produced and the full data contract, see 
 2. **For each open item** (`.nitpick/<id>.json`):
    a. **See it.** Read `<id>.png` — the accent-colored circle/arrow/freehand marks the exact
       problem area. Read `<id>-ref.png` if present — that's the user's target look.
-   b. **Locate the code.**
-      - `element.source` set → open `element.source.file` at `element.source.line`.
-      - `element.source` null (expected on React 19+ without the build stamp) → find it via
-        `element.componentName` / `componentStack` (grep the component), then narrow with
-        `element.text`, `element.selector`, and `element.classes`.
-   c. **Diagnose.** Combine `comment` + annotations + reference image with the live facts:
-      `element.computedStyles` (current values), `element.boundingBox`, and `viewport`
+   b. **Locate the code.** A report may reference several elements (`targets[]`) or none
+      (a free-form visual/region note). For each entry in `targets` (fall back to `element` =
+      `targets[0]` on older reports):
+      - `target.source` set → open `target.source.file` at `.line`.
+      - else use the rich locators: `target.locators.getBy` (Playwright-style, e.g.
+        `getByRole('button', { name: "Upgrade" })`), `componentName`/`componentStack` (grep the
+        component), then `locators.testId`, `locators.css`, `locators.xpath`, `text`, `classes`.
+      - **No `targets`?** It's a free-form report — locate the area from the `route`, the
+        annotated `screenshot`, the `region`, and the `comment`.
+   c. **Diagnose.** Combine `comment` + the annotated `screenshot` + reference image with the
+      live facts: `target.computedStyles` (current values), `target.boundingBox`, and `viewport`
       (`viewport.width` ≈ 390/430 → a mobile complaint; fix responsively, never hardcode px for
-      one width). The annotations' normalized coords are relative to the element box
-      (`cx:0.8, cy:0.3` ≈ 80% across, 30% down).
+      one width). Annotations are free-form shapes (arrow/rect/ellipse/pen) in **page-pixel
+      coords** and are already baked into the screenshot — trust the picture for *where*, the
+      comment for *what*. If `actions` is present, it's a **recorded repro flow** (clicks /
+      inputs / navigations, in order, across screens, each with a Playwright-style locator) —
+      use it to reproduce the bug and understand the steps that lead to it.
    d. **Fix at the source.** Edit the real component. Match the project's styling system
       (Tailwind / CSS modules / styled-components / inline — infer from the file and neighbors).
       Keep edits minimal and idiomatic; don't refactor unrelated code.

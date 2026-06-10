@@ -62,13 +62,20 @@ Nothing Nitpick adds runs in production — the overlay and the route both hard-
 ## Use it
 
 1. Run your app: `npm run dev`.
-2. Press **`Ctrl+Shift+. (period)`**. The screen dims into pick mode.
-3. **Hover** — each element highlights and shows its component + source path.
-4. **Click** the element you want to report.
-5. **Annotate**: circle / arrow / freehand, type your comment, and `Ctrl+V` a reference
-   screenshot if you have one.
-6. **Submit** (or `Esc` to cancel). It's written to `.nitpick/`.
-7. Repeat for as many issues as you want — they queue up.
+2. Activate: **`Ctrl+Shift+. (period)`**, double-tap **Shift**, or click the badge. A draggable
+   **toolbox** appears (drag the ⠿ handle to move it).
+3. Pick a tool:
+   - **⌖ Inspect** — hover to highlight, click to capture an element (you can capture several).
+     Each grabs the component, source line, computed styles, and Playwright-style locators
+     (role + name, `getByRole`/`getByTestId`, CSS, XPath).
+   - **↗ Arrow · ✎ Draw · ▭ Box** — annotate **anywhere** on the page, element or not.
+   - **⬚ Area** — drag a region; it snips that section and saves just that crop (otherwise the
+     capture is the **🖼 full page**).
+   - **● Record** — hides the overlay and logs your clicks / inputs / **navigation** in the
+     background as a repro flow; it **persists across screens** (even full page reloads). Hit
+     **Stop** when done.
+4. Type a comment, optionally `Ctrl+V` / drop a reference image, then **Save** (or `Esc` to cancel).
+5. Repeat for as many issues as you want — they queue up in `.nitpick/`.
 
 Then, in Claude Code:
 

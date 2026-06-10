@@ -78,8 +78,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     comment: typeof body.comment === 'string' ? body.comment : '',
     route: typeof body.route === 'string' ? body.route : null,
     viewport: body.viewport ?? null,
+    captureType: typeof body.captureType === 'string' ? body.captureType : null,
+    region: body.region ?? null,
+    coordSpace: typeof body.coordSpace === 'string' ? body.coordSpace : null,
     element: body.element ?? null,
+    targets: Array.isArray(body.targets) ? body.targets : [],
     annotations: Array.isArray(body.annotations) ? body.annotations : [],
+    actions: Array.isArray(body.actions) ? body.actions : [],
     screenshot,
     referenceImage,
   };
