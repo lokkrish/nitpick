@@ -141,11 +141,17 @@ repro script the dev (or BMAD dev agent) can replay. Password inputs are redacte
 dev server as they're captured** rather than held in the browser and POSTed together. The route
 gains two ops: `stage` (write one shot to `.nitpick/.draft/<draftId>/` with a `meta.json` of
 `{file, route}`) and `discard` (delete a draft). The browser keeps only light refs + the
-`draftId` (in `sessionStorage`, so a recording resumes into the same draft across reloads). On
-**save**, the client sends just the `draftId`; the server promotes the staged shots into
-`NNN-1.png`, `NNN-2.png`, … and deletes the draft. Cancelling/closing a session — or starting a
-new Nitpick — fires `discard`, so unsubmitted captures never linger. Captures are also
-size-budgeted (downscaled + JPEG) as a second guard against OOM.
+`draftId`. On **save**, the client sends just the `draftId`; the server promotes the staged
+shots into `NNN-1.png`, `NNN-2.png`, … and deletes the draft. Cancelling/closing a session — or
+starting a new Nitpick — fires `discard`, so unsubmitted captures never linger. Captures are
+size-budgeted (downscaled + JPEG) and hard-capped (min interval + max count) as guards against OOM.
+
+**No silent auto-resume (v2.9).** Recording lives in component memory for the page-view — it
+survives **client-side** navigation (the overlay stays mounted) but is intentionally **not**
+resumed across **full page reloads**. Earlier the session was restored from `sessionStorage` on
+every mount, which could silently restart background recording after a crash and grow the dev
+server heap. Now a fresh page load **abandons** any prior session (discards its server draft,
+clears keys), so the overlay is completely inert unless you actively use it.
 
 **Snip + "＋ Elements" (v2.2/2.3):** **Snip** crops a region and lets the user draw on the
 cropped image; those drawings are **baked into the image** (no coordinates stored) and saved as

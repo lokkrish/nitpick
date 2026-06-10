@@ -285,10 +285,10 @@ async function flattenSnip(url: string, shapes: Shape[]): Promise<string> {
 
 // ----------------------------------------------------------------- session storage
 
-function loadActions(): Action[] { try { return JSON.parse(sessionStorage.getItem(ACT_KEY) || '[]'); } catch { return []; } }
-function saveActions(a: Action[]) { try { sessionStorage.setItem(ACT_KEY, JSON.stringify(a)); } catch { /* ignore */ } }
-function loadShots(): ScreenShot[] { try { return JSON.parse(sessionStorage.getItem(SHOT_KEY) || '[]'); } catch { return []; } }
-function saveShots(s: ScreenShot[]) { try { sessionStorage.setItem(SHOT_KEY, JSON.stringify(s)); } catch { /* quota — keep them in memory only */ } }
+// Recording lives in component memory for the page-view (it survives client-side navigation
+// because the component stays mounted) and is streamed to the server draft. We deliberately do
+// NOT persist/resume it across full page reloads — only the draft id is tracked, so an abandoned
+// draft can be discarded. This keeps the overlay completely inert when not actively in use.
 function clearSessionStore() { try { sessionStorage.removeItem(ACT_KEY); sessionStorage.removeItem(REC_KEY); sessionStorage.removeItem(SHOT_KEY); sessionStorage.removeItem(DRAFT_KEY); } catch { /* ignore */ } }
 
 // ----------------------------------------------------------------- component
@@ -330,6 +330,8 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
   const prevRec = useRef(false);
   const draftIdRef = useRef<string | null>(null);
   const lastUrlRef = useRef('');
+  const lastShotAtRef = useRef(0);
+  const shotCountRef = useRef(0);
 
   const post = (payload: unknown) =>
     fetch(ENDPOINT, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) });
@@ -351,14 +353,19 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
     if (d) post({ op: 'discard', draftId: d }).catch(() => {});
   }, []);
 
-  // capture one screen and STREAM it to the server draft (browser keeps only a light ref)
+  // capture one screen and STREAM it to the server draft (browser keeps only a light ref).
+  // Hard caps (min interval + max count) so recording can never storm the dev server.
   const captureRecordShot = useCallback(async () => {
+    const now = Date.now();
+    if (now - lastShotAtRef.current < 1200 || shotCountRef.current >= 60) return;
+    lastShotAtRef.current = now;
     const route = location.pathname + location.search;
     const url = await recordShot();
     if (!url) return;
     const draftId = ensureDraft();
     try { const res = await post({ op: 'stage', draftId, route, image: url }); if (!res.ok) return; } catch { return; }
-    setRecordShots((prev) => { const next = [...prev, { route }].slice(-50); saveShots(next); return next; });
+    shotCountRef.current += 1;
+    setRecordShots((prev) => [...prev, { route }].slice(-60));
   }, [ensureDraft]);
   const scheduleShot = useCallback((delay: number) => {
     if (shotTimer.current) clearTimeout(shotTimer.current);
@@ -377,6 +384,7 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
     setSnipTargets([]); setAddElements(false);
     setActions([]); setRecordShots([]); setHovered(null); setComment(''); setReferenceImage(null); setSubmitting(false);
     drawStart.current = null; snipStart.current = null;
+    shotCountRef.current = 0; lastShotAtRef.current = 0;
     if (shotTimer.current) clearTimeout(shotTimer.current);
     discardDraft(); // remove any streamed-but-unsubmitted shots
     clearSessionStore();
@@ -392,21 +400,20 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
     if (typeof window !== 'undefined') { setScroll({ x: window.scrollX, y: window.scrollY }); setPos({ x: Math.max(8, (window.innerWidth - 520) / 2), y: 14 }); }
   }, []);
 
-  // mount + restore an in-progress recording session (persists across full reloads)
+  // mount — start clean. We do NOT silently auto-resume a recording across page loads (that
+  // could keep capturing in the background and grow the dev-server heap). A fresh page load
+  // abandons any prior session: discard its server draft and clear local keys. (Recording still
+  // works across client-side navigation, since the component stays mounted then.)
   useEffect(() => {
     setMounted(true);
     // eslint-disable-next-line no-console
     console.info(`[Nitpick] ready — ${hotkeyLabel(hotkey)} / double-tap Shift / click the badge.`);
     try {
-      const acts = loadActions(); const shots = loadShots(); const wasRec = sessionStorage.getItem(REC_KEY) === '1';
-      if (acts.length || shots.length || wasRec) {
-        draftIdRef.current = sessionStorage.getItem(DRAFT_KEY) || null; // keep streaming to the same draft
-        setActions(acts); setRecordShots(shots); setActive(true); setRecording(wasRec); setTool(null);
-        setPos({ x: Math.max(8, (window.innerWidth - 520) / 2), y: 14 });
-        showToast('📍 Nitpick session resumed');
-      }
+      const leftover = sessionStorage.getItem(DRAFT_KEY);
+      if (leftover) post({ op: 'discard', draftId: leftover }).catch(() => {});
     } catch { /* ignore */ }
-  }, [hotkey, showToast]);
+    clearSessionStore();
+  }, [hotkey]);
 
   // activation
   useEffect(() => {
@@ -441,8 +448,6 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
     return () => window.removeEventListener('scroll', onScroll);
   }, [active, recording, snip]);
 
-  useEffect(() => { if (active) saveActions(actions); }, [actions, active]);
-
   // Inspect — hover highlight + click to capture; excludes Nitpick UI so the comment box works
   useEffect(() => {
     if (!active || recording || snip || tool !== 'inspect') { setHovered(null); return; }
@@ -468,10 +473,10 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
   // Record — overlay hidden; capture clicks / inputs (text, select, radio, checkbox) / submit / navigation
   useEffect(() => {
     if (!active || !recording) return;
-    try { sessionStorage.setItem(REC_KEY, '1'); } catch { /* ignore */ }
+    shotCountRef.current = 0; lastShotAtRef.current = 0; // reset safety caps for this recording
     const onUi = (t: EventTarget | null) => t instanceof Element && !!t.closest('[data-nitpick-ui]');
     const record = (a: Omit<Action, 'at' | 'url'>) =>
-      setActions((prev) => { const next = [...prev, { ...a, at: new Date().toISOString(), url: location.pathname + location.search }]; saveActions(next); return next; });
+      setActions((prev) => [...prev, { ...a, at: new Date().toISOString(), url: location.pathname + location.search }]);
     ensureDraft(); // so the streamed shots have a draft to land in (and can be discarded)
     lastUrlRef.current = location.pathname + location.search;
     record({ type: 'navigate' });
@@ -521,19 +526,10 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
   // snapshot the final screen when recording stops, then reconcile state with the persisted
   // store so the toolbox shows everything captured across all screens before the user submits.
   useEffect(() => {
-    if (prevRec.current && !recording && active) {
-      void (async () => {
-        await captureRecordShot();
-        try {
-          const a = loadActions(); setActions((cur) => (a.length > cur.length ? a : cur));
-          const s = loadShots(); setRecordShots((cur) => (s.length > cur.length ? s : cur));
-        } catch { /* ignore */ }
-      })();
-    }
+    if (prevRec.current && !recording && active) void captureRecordShot(); // snapshot the final screen
     prevRec.current = recording;
   }, [recording, active, captureRecordShot]);
 
-  useEffect(() => { if (active && !recording) { try { sessionStorage.removeItem(REC_KEY); } catch { /* ignore */ } } }, [active, recording]);
 
   useEffect(() => {
     if (!active || recording) return;
@@ -618,9 +614,8 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
     try {
       const isSnip = !!snip;
       const hasDrawing = !!draft || shapes.length > 0;
-      // Fall back to the persisted store so a save never loses cross-screen capture.
-      const liveActions = actions.length ? actions : loadActions();
-      const liveShots = recordShots.length ? recordShots : loadShots();
+      const liveActions = actions;
+      const liveShots = recordShots;
       const draftId = draftIdRef.current; // recording screens are already on the server draft
       const isRecording = !isSnip && (liveShots.length > 0 || liveActions.length > 0 || !!draftId);
       let screenshot: string | null = null;

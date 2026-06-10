@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.9 — unreleased
+
+- **Fix: dev-server memory climbing to OOM even when Nitpick wasn't being used.** On every mount
+  the overlay restored a prior session from `sessionStorage` and could **silently auto-resume
+  recording**; after a crash/reload it would keep capturing in the background, and any URL change
+  then streamed shots → the Node heap grew to GBs. The overlay now **starts clean on every page
+  load** (no silent resume) — a fresh load abandons and discards any prior session — so it's fully
+  inert unless actively used.
+- Added hard safety caps on Record (min 1.2s between shots, max 60 per recording) as a backstop.
+- Recording still works across **client-side** navigation (component stays mounted); it no longer
+  persists/resumes across **full page reloads**.
+
 ## 0.2.8 — unreleased
 
 - **Fix: `useInsertionEffect must not schedule updates` warning + capture storm during Record.**
