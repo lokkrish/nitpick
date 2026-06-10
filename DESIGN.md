@@ -137,6 +137,16 @@ sequence **survives client-side and full-page navigations** (the overlay rehydra
 on mount). Each action carries the URL + Playwright-style locator, so `actions` reads like a
 repro script the dev (or BMAD dev agent) can replay. Password inputs are redacted to `***`.
 
+**Streaming record shots (v2.7):** to keep memory flat, record screenshots are **streamed to the
+dev server as they're captured** rather than held in the browser and POSTed together. The route
+gains two ops: `stage` (write one shot to `.nitpick/.draft/<draftId>/` with a `meta.json` of
+`{file, route}`) and `discard` (delete a draft). The browser keeps only light refs + the
+`draftId` (in `sessionStorage`, so a recording resumes into the same draft across reloads). On
+**save**, the client sends just the `draftId`; the server promotes the staged shots into
+`NNN-1.png`, `NNN-2.png`, … and deletes the draft. Cancelling/closing a session — or starting a
+new Nitpick — fires `discard`, so unsubmitted captures never linger. Captures are also
+size-budgeted (downscaled + JPEG) as a second guard against OOM.
+
 **Snip + "＋ Elements" (v2.2/2.3):** **Snip** crops a region and lets the user draw on the
 cropped image; those drawings are **baked into the image** (no coordinates stored) and saved as
 the screenshot. By default a snip is image + comment only (`targets: []`). The optional

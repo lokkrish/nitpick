@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.2.8 — unreleased
+
+- **Fix: `useInsertionEffect must not schedule updates` warning + capture storm during Record.**
+  The history `pushState`/`replaceState` patch ran `setActions`/screenshot scheduling synchronously
+  inside the call stack where Next syncs the router (a React insertion effect), and Next fires
+  `replaceState` frequently (scroll/param syncs) — so every one recorded a "navigate" and queued a
+  screenshot, flooding `/api/nitpick` and pushing the dev server toward its memory limit.
+  Navigation handling now **defers out of that call stack** and **only records a real screen
+  change** (dedupes repeated same-URL history calls), so there's one capture per actual screen.
+
+## 0.2.7 — unreleased
+
+- **Record now streams each screen to the dev server as it's captured** (new `stage` op →
+  `.nitpick/.draft/<draftId>/`), instead of holding every image in browser memory and POSTing
+  them all at Save. The browser keeps only light refs; the final Save sends just a `draftId`
+  (plus actions/comment), and the server promotes the staged shots into `NNN-1.png`, `NNN-2.png`,
+  … This keeps memory flat no matter how many screens are recorded.
+- **Abandoned drafts are cleaned up**: cancelling/closing a session (or starting a new Nitpick)
+  discards the draft on the server (new `discard` op), so unsubmitted captures don't linger.
+  Draft id + refs persist in `sessionStorage`, so a recording resumes into the same draft across
+  reloads.
+
+## 0.2.6 — unreleased
+
+- **Fix: dev-server out-of-memory on save.** Record was capturing full-page PNGs at device pixel
+  ratio; on long/complex pages a multi-screen save POSTed tens of MB (sometimes GB), OOM-ing the
+  Node dev server while parsing the body. Captures are now budget-limited:
+  - per-screen record shots are downscaled (≤ ~1400×3000) and JPEG-encoded (≈100–300 KB each);
+  - the single full-page screenshot is capped (≤ ~1600×5000);
+  - retained screens capped at 12;
+  - the API route rejects payloads over 40 MB with `413` (Pages Router already had a body limit).
+
+## 0.2.5 — unreleased
+
+- **Fix: post-recording summary showed "0".** After Stop, the toolbox status line only counted
+  drawings/elements (both 0 for a recording) and never showed the screens count, so a recording
+  looked empty even though Save persisted it. The toolbox now shows a clear
+  **"🎬 N actions · M screens captured — add a comment, then Save"** summary whenever recording
+  data exists.
+- **Robustness:** on Stop, state is reconciled with the persisted `sessionStorage` store
+  (covers capture spread across multiple screens), and Save falls back to the store if state is
+  empty — so a recording is never saved blank.
+
 ## 0.2.4 — unreleased
 
 - **Record now captures every screen, not just the last one.** A full-page shot is taken on
