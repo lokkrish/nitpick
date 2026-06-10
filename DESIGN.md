@@ -78,8 +78,8 @@ This is the interface between browser and agent — keep it stable.
   "comment": "Padding too tight; button overflows on mobile",
   "route": "/dashboard",
   "viewport": { "width": 390, "height": 844, "dpr": 2, "scrollX": 0, "scrollY": 120 },
-  "captureType": "full" | "snip" | "recording", // how the report was made
-  "coordSpace": "page",                   // annotations & boxes are PAGE coords (incl. scroll)
+  "captureType": "element" | "snip" | "recording" | "full", // how the report was made
+  "coordSpace": "page",                   // boxes are PAGE coords (incl. scroll)
   // `targets` = every element the user Inspected (0..n). `element` = targets[0] (back-compat).
   "targets": [
     {
@@ -98,15 +98,13 @@ This is the interface between browser and agent — keep it stable.
         "outerTag": "<button class=\"cta\" data-testid=\"upgrade-card\"></button>"
       },
       "boundingBox": { "x": 12, "y": 200, "w": 180, "h": 64 },
-      "computedStyles": { "padding": "8px", "display": "flex", "...": "relevant subset" }
+      "computedStyles": { "padding": "8px", "display": "flex", "...": "relevant subset" },
+      "image": "001-1.png"                 // cropped screenshot of THIS element (Inspect)
     }
   ],
   "element": { /* = targets[0], or null for a free-form (no-element) report */ },
-  "annotations": [                        // free-form, drawn anywhere; PAGE coords (px)
-    { "type": "arrow", "x1": 40, "y1": 60, "x2": 220, "y2": 180 },
-    { "type": "rect", "x": 20, "y": 40, "w": 300, "h": 120 },
-    { "type": "pen", "pts": [[10,20],[15,25]] }
-  ],
+  "targetImages": ["001-1.png", "001-2.png"], // one crop per Inspected element, in order
+  "annotations": [],                      // reserved; snip drawings are baked into the image
   // recorded interaction flow (Record tool) — spans screens, in order; ACTIONS ONLY (no images)
   "actions": [
     { "type": "navigate", "at": "...", "url": "/" },
@@ -114,17 +112,25 @@ This is the interface between browser and agent — keep it stable.
     { "type": "navigate", "at": "...", "url": "/about" },
     { "type": "input", "at": "...", "url": "/about", "locator": { "getBy": "getByRole('textbox', { name: \"Email\" })" }, "value": "a@b.com" }
   ],
-  "screenshot": "001.png",                // draw/snip/full reports; null for recording (actions only)
+  "screenshot": "001.png",                // snip/full reports; null for element & recording reports
   "referenceImage": "001-ref.png"         // optional, user-supplied
 }
 ```
 
 `.nitpick/queue.json` is the index: `{ "items": [{ "id", "status", "comment", "route" }], "nextId": 4 }`.
 
-**v2 note:** annotations are now free-form (drawable anywhere on the page, no element required)
-and stored in **page coordinates**. `targets` is a list because a report can reference zero or
-many elements; a report with `targets: []` is a pure visual/region note. `element` stays as a
-`targets[0]` alias for backward compatibility.
+**Tools (v0.3.3):** the toolbox is **Inspect**, **Snip**, and **Record** — there is no longer a
+standalone Draw tool (drawing lives inside the Snip editor, where it's most useful). `targets` is
+a list because a report can reference zero or many Inspected elements; a report with
+`targets: []` is a pure visual/region note. `element` stays as a `targets[0]` alias for backward
+compatibility.
+
+**Per-element images (v0.3.3):** **Inspect** now saves a **cropped screenshot of each selected
+element** — `<id>-1.png` for the 1st element, `<id>-2.png` for the 2nd, and so on (also surfaced
+as `target.image` on each entry and in `targetImages`). Each crop is produced by
+`captureRegion(target.boundingBox)`, so it's correct **even if the element has scrolled off-screen**
+by the time you Save (verified in a real browser). There is no whole-page `<id>.png` for an
+Inspect report — the per-element crops are the picture.
 
 **Actions recorder (v2.1):** the **Record** tool hides the overlay and logs the user's
 clicks / inputs / submits / navigations in the background. Each action carries the URL +
@@ -138,7 +144,7 @@ visited (`screens[]`, streamed to a server-side `.draft/`). That whole path is *
 per-screen shots only ever captured the top of the page (an `html-to-image` limitation, see
 below), bloated reports, and were a memory-pressure source. A recording now saves just the
 ordered `actions` — which already pinpoint *what* the user did and *where* (route + locator).
-Use **Snip** or **Draw** when a picture is needed.
+Use **Snip** or **Inspect** when a picture is needed.
 
 **Snip (v2.2):** **Snip** crops a region and lets the user draw on the cropped image; those
 drawings are **baked into the image** (no coordinates stored) and saved as the screenshot. A snip
@@ -178,11 +184,12 @@ so exactly `[x, y, w, h]` of the page is rendered into the frame — **correct a
 position**, and always within the browser's max-canvas size because the frame is a region, never
 the whole long page. Everything builds on it:
 
-- **Draw** → `captureRegion(viewport)` (the view pane you're looking at), then the vector marks
-  are composited in (page coords − scroll origin) so they land exactly where you drew them.
+- **Inspect** → `captureRegion(target.boundingBox)` per element → `<id>-1.png`, `<id>-2.png`, …
+  (correct even for elements that have scrolled off-screen by Save time).
 - **Snip** → `captureRegion(snipBox)` renders precisely the dragged region — the full snipped
   area, even if it straddles an element edge — which you then mark up; those marks are baked into
   the image (no coordinates stored).
+- **Comment-only** → `captureRegion(viewport)` for a context shot (`<id>.png`).
 
 Capture is **best-effort**: if `html-to-image` is absent or throws, the report still saves with
 its comment + metadata (and, for Inspect, full element targets) and stays actionable. A brief

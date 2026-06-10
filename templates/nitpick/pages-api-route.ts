@@ -72,6 +72,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     await fs.writeFile(path.join(DIR, referenceImage), ref.buf);
   }
 
+  // One cropped screenshot per Inspected element → <id>-1.png, <id>-2.png, … (aligned with targets).
+  const targets = Array.isArray(body.targets) ? body.targets.map((t: any) => ({ ...t })) : [];
+  const targetImagesIn = Array.isArray(body.targetImages) ? body.targetImages : [];
+  const targetImages: string[] = [];
+  for (let i = 0; i < targets.length; i++) {
+    const img = dataUrlToBuffer(targetImagesIn[i]);
+    if (!img) continue;
+    const file = `${id}-${i + 1}.${img.ext}`;
+    await fs.writeFile(path.join(DIR, file), img.buf);
+    targets[i].image = file;
+    targetImages.push(file);
+  }
+
   const record = {
     id,
     status: 'open',
@@ -81,8 +94,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     viewport: body.viewport ?? null,
     captureType: typeof body.captureType === 'string' ? body.captureType : null,
     coordSpace: typeof body.coordSpace === 'string' ? body.coordSpace : null,
-    element: body.element ?? null,
-    targets: Array.isArray(body.targets) ? body.targets : [],
+    element: targets[0] ?? body.element ?? null,
+    targets,
+    targetImages,
     annotations: Array.isArray(body.annotations) ? body.annotations : [],
     actions: Array.isArray(body.actions) ? body.actions : [],
     screenshot,

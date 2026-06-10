@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.3
+
+- **Inspect now saves a cropped screenshot per selected element.** Pick element 1, 2, 3, … and
+  each is saved as `<id>-1.png`, `<id>-2.png`, … (also surfaced as `target.image` on every entry
+  and in a `targetImages` array). Each crop uses `captureRegion(target.boundingBox)`, so it's
+  correct **even if the element has scrolled off-screen** by the time you Save — verified in a real
+  browser (two below-the-fold elements captured cleanly). New `captureType: "element"`.
+- **Removed the standalone Draw tool.** Drawing (Arrow / Circle / Box / Pen) now lives only inside
+  the **Snip** editor, where it's actually useful — the top-level Draw was redundant. The toolbox
+  is now **Inspect · Snip · Record**. Page-level vector annotations are gone (`annotations` is kept
+  as an empty array for back-compat); Snip drawings remain baked into the snipped image.
+- The fix skill, README, and DESIGN updated for the per-element images and the slimmer toolbox.
+
 ## 0.3.2
 
 Capture rewrite — the screenshots actually work now, at any scroll position.

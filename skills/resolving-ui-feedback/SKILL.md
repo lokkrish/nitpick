@@ -22,8 +22,9 @@ correct code fix. (For how reports are produced and the full data contract, see 
 ## The queue
 
 - `.nitpick/queue.json` is the index: `{ "items": [{ id, status, comment, route }], "nextId" }`.
-- Each report is `.nitpick/<id>.json`, with optional images `<id>.png` (annotated element) and
-  `<id>-ref.png` (user reference).
+- Each report is `.nitpick/<id>.json`, with optional images: `<id>.png` (snip/viewport shot),
+  `<id>-1.png`, `<id>-2.png`, … (one cropped screenshot per Inspected element), and `<id>-ref.png`
+  (user reference).
 - Process **open** items oldest-id-first, one at a time, unless the user scopes to one id.
 
 ## Workflow
@@ -31,11 +32,14 @@ correct code fix. (For how reports are produced and the full data contract, see 
 1. **Load the queue.** Read `.nitpick/queue.json`. No open items → say so and remind the user
    to capture issues with Ctrl+Shift+. (period). Done.
 2. **For each open item** (`.nitpick/<id>.json`):
-   a. **See it.** Read `<id>.png` — the accent-colored marks point at the exact problem area.
-      Read `<id>-ref.png` if present — that's the user's target look. If the item is a
-      **recording** (`captureType: "recording"`), there is **no screenshot** — it's an action
-      flow: read `actions` (clicks / inputs / navigations, in order, each with a route + a
-      Playwright-style locator) and reproduce the steps to reach the bug.
+   a. **See it.** What's on disk depends on `captureType`:
+      - **`element`** (Inspect) — each Inspected element has its **own cropped screenshot**
+        `<id>-1.png`, `<id>-2.png`, … (also referenced as `target.image` on each entry in
+        `targets`, and listed in `targetImages`). Read the crop for the element you're fixing.
+      - **`snip` / `full`** — read `<id>.png` (the snipped region, or the viewport, with marks
+        baked in).
+      - **`recording`** — there is **no screenshot**; it's an action flow (read `actions`).
+      In all cases read `<id>-ref.png` if present — that's the user's target look.
    b. **Locate the code.** A report may reference several elements (`targets[]`) or none
       (a free-form visual/region note). For each entry in `targets` (fall back to `element` =
       `targets[0]` on older reports):
@@ -45,13 +49,12 @@ correct code fix. (For how reports are produced and the full data contract, see 
         component), then `locators.testId`, `locators.css`, `locators.xpath`, `text`, `classes`.
       - **No `targets`?** It's a free-form report — locate the area from the `route`, the
         annotated `screenshot`, and the `comment`.
-   c. **Diagnose.** Combine `comment` + the annotated `screenshot` + reference image with the
+   c. **Diagnose.** Combine `comment` + the relevant image(s) + reference image with the
       live facts: `target.computedStyles` (current values), `target.boundingBox`, and `viewport`
       (`viewport.width` ≈ 390/430 → a mobile complaint; fix responsively, never hardcode px for
-      one width). Annotations are free-form shapes (arrow/rect/ellipse/pen) in **page-pixel
-      coords** and are already baked into the screenshot — trust the picture for *where*, the
-      comment for *what*. The `screenshot` for a Draw/Snip report is the **viewport the user was
-      looking at** (or the snipped region) with the marks baked in — not the whole page. If
+      one width). For an **Inspect** report each element has its own crop (`target.image`); a
+      **Snip** report's `screenshot` is the snipped region with the user's marks baked in. Trust
+      the picture for *where*, the comment for *what*. If
       `actions` is present, it's a **recorded repro flow** (clicks / inputs / navigations, in
       order, across screens, each with a Playwright-style locator) — use it to reproduce the bug
       and understand the steps that lead to it.

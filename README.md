@@ -49,9 +49,10 @@ Playwright-style locators, and a screenshot. Reporting and fixing stay cleanly s
 ## ✨ Features
 
 - 🎯 **Inspect → source** — click any element to capture its **React source line**, component
-  stack, computed styles, and **Playwright-style locators** (`getByRole`, `getByTestId`, CSS, XPath).
-- 🎨 **Draw anywhere** — Arrow / Circle / Box / Pen over the whole page, element or not.
-- ✂️ **Snip** — crop a region, mark it up, save it as a flat annotated image.
+  stack, computed styles, **Playwright-style locators** (`getByRole`, `getByTestId`, CSS, XPath),
+  **and a cropped screenshot of each selected element** (`<id>-1.png`, `<id>-2.png`, …).
+- ✂️ **Snip** — crop a region (correct at any scroll), mark it up with Arrow / Circle / Box / Pen,
+  save it as a flat annotated image.
 - 🎬 **Record a flow** — capture clicks, field inputs (text / dropdown / radio / checkbox), and
   **navigation across multiple screens** as an ordered repro script (each step with its route and
   a Playwright-style locator).
@@ -75,7 +76,7 @@ npm run dev          # (re)start your dev server
 Then, in the browser:
 
 1. Activate: **`Ctrl+Shift+.`**, double-tap **Shift**, or click the **📍 Nitpick** badge.
-2. Pick a tool — **Inspect**, **Draw**, **Snip**, or **Record** — annotate, add a comment,
+2. Pick a tool — **Inspect**, **Snip**, or **Record** — annotate, add a comment,
    optionally paste a reference image, and **Save**.
 3. Repeat; reports queue in `.nitpick/`.
 
