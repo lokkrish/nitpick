@@ -1,184 +1,161 @@
+<div align="center">
+
 # 📍 Nitpick
 
-**Point at a UI bug. Get a source-located fix.**
+### Point at a UI bug in your running app. Get a source-located fix.
 
-Nitpick is a Claude Code plugin for people building Next.js apps with an AI coding agent. The
-hardest part of vibe-coding a UI isn't fixing issues — it's *describing* them precisely enough
-for the agent to fix the right thing. Nitpick closes that gap.
+**A [Claude Code](https://claude.com/claude-code) plugin for Next.js — with first-class [BMAD-METHOD](https://github.com/bmad-code-org/BMAD-METHOD) support.**
 
-Press **`Ctrl+Shift+. (period)`** in your running dev app, click the element that's wrong, circle it,
-type what's off, optionally paste a reference image — and Nitpick captures the **exact source
-location**, the component, the styles, and an annotated screenshot. Claude then works through
-your feedback queue, fixing each item at its source.
+Press a hotkey, circle the element that's wrong, say what's off — Nitpick captures the exact
+component, source line, Playwright-style locators, and an annotated screenshot, then Claude (or
+your BMAD dev agent) fixes each report at its source.
 
-```
-  Ctrl+Shift+. (period)  →  click element  →  annotate + comment  →  .nitpick/001.json + 001.png
-                                                                      │
-                            /nitpick:process  ◀───────────────────────┘
-                            Claude reads each item, opens the source line, fixes it.
-```
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+[![Claude Code plugin](https://img.shields.io/badge/Claude_Code-plugin-da7756)](https://code.claude.com/docs/en/plugins)
+[![Works with BMAD-METHOD](https://img.shields.io/badge/BMAD--METHOD-v6-7a5cff)](https://github.com/bmad-code-org/BMAD-METHOD)
+[![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](./CONTRIBUTING.md)
+[![GitHub stars](https://img.shields.io/github/stars/lokkrish/nitpick?style=social)](https://github.com/lokkrish/nitpick)
+
+[**Quickstart**](#-quickstart-claude-code) · [**With BMAD**](#-with-bmad-method) · [**How it works**](#-how-it-works) · [**Live demo**](https://lokkrish.github.io/nitpick/) · [**Commands**](#-command-reference)
+
+</div>
+
+<div align="center">
+
+<!-- Add an animated demo at docs/demo.gif and it renders here. -->
+<img src="./docs/demo.gif" alt="Nitpick demo" width="760" onerror="this.style.display='none'">
+
+</div>
 
 ---
 
-> **See how it works:** open [`docs/index.html`](./docs/index.html) — an explainer with a live
-> (simulated) capture demo and Install / Usage / Decommission steps for both modes (Claude-only
-> and with BMAD).
+## Why Nitpick
 
-## Install
+When you build a UI with an AI coding agent, the hard part isn't *fixing* issues — it's
+**describing** them precisely. "The card padding looks off" makes the agent guess which card,
+which file, which line. Round-trips pile up.
 
-Nitpick installs from this GitHub repo as a Claude Code plugin marketplace.
+Nitpick removes the guessing. You **point at the broken element in the running app**, and the
+agent receives the comment already mapped to a source location — with the component, the styles,
+Playwright-style locators, and a screenshot. Reporting and fixing stay cleanly separated.
+
+```
+  hotkey → circle element → comment → .nitpick/001.json + 001.png
+                                              │
+                  /nitpick:process  ◀──────────┘   (or routed to your BMAD dev agent)
+                  Claude opens the source line and fixes it.
+```
+
+## ✨ Features
+
+- 🎯 **Inspect → source** — click any element to capture its **React source line**, component
+  stack, computed styles, and **Playwright-style locators** (`getByRole`, `getByTestId`, CSS, XPath).
+- 🎨 **Draw anywhere** — Arrow / Circle / Box / Pen over the whole page, element or not.
+- ✂️ **Snip** — crop a region, mark it up, save it as a flat annotated image.
+- 🎬 **Record a flow** — capture clicks, field inputs (text / dropdown / radio / checkbox), and
+  **navigation across multiple screens** — a repro script with one screenshot per screen.
+- 🧰 **Draggable toolbox**, configurable hotkey (or double-tap Shift, or a click).
+- 🤝 **BMAD-METHOD aware** — route feedback to the dev agent now, or into stories after an epic.
+- 🔒 **Dev-only & report-only** — never runs in production, never changes your app's behavior;
+  everything stays local in `.nitpick/`.
+
+## 🚀 Quickstart (Claude Code)
 
 ```shell
-# 1. Add this repo as a marketplace
-/plugin marketplace add <your-github-username>/nitpick
-
-# 2. Install the plugin
+# 1. Add the marketplace + install (in Claude Code)
+/plugin marketplace add lokkrish/nitpick
 /plugin install nitpick@nitpick-tools
-```
 
-> Developing locally? Point Claude Code at the folder instead:
-> `/plugin marketplace add /path/to/nitpick` then `/plugin install nitpick@nitpick-tools`.
-
-## Set up your Next.js app (one time)
-
-From inside your Next.js project, run:
-
-```shell
+# 2. Scaffold the overlay into your Next.js app
 /nitpick:setup
+npm run dev          # (re)start your dev server
 ```
 
-Claude inspects your project (App Router vs Pages Router, `src/` or not, TS/JS) and scaffolds:
+Then, in the browser:
 
-- `components/nitpick/NitpickOverlay.tsx` — the dev-only overlay
-- `components/nitpick/nitpick-source.ts` — the click-to-source resolver
-- `app/api/nitpick/route.ts` — the dev-only API route that writes feedback to disk
-- a dev-only mount in your root layout
-- a `.nitpick/` entry in `.gitignore`
-- installs `html-to-image` as a dev dependency (best-effort screenshots)
+1. Activate: **`Ctrl+Shift+.`**, double-tap **Shift**, or click the **📍 Nitpick** badge.
+2. Pick a tool — **Inspect**, **Draw**, **Snip**, or **Record** — annotate, add a comment,
+   optionally paste a reference image, and **Save**.
+3. Repeat; reports queue in `.nitpick/`.
 
-Nothing Nitpick adds runs in production — the overlay and the route both hard-gate on
-`NODE_ENV`.
-
-## Use it
-
-1. Run your app: `npm run dev`.
-2. Activate: **`Ctrl+Shift+. (period)`**, double-tap **Shift**, or click the badge. A draggable
-   **toolbox** appears (drag the ⠿ handle to move it).
-3. Pick a tool (nothing is selected by default):
-   - **⌖ Inspect** — hover to highlight, click to capture an element (you can capture several).
-     Each grabs the component, source line, computed styles, and Playwright-style locators
-     (role + name, `getByRole`/`getByTestId`, CSS, XPath).
-   - **✎ Draw** — group of **Arrow / Circle / Box / Pen**; annotate **anywhere** on the page,
-     element or not (saved as vector annotations on a full-page screenshot).
-   - **✂ Snip** — drag a region, then draw **on the cropped image**; Save stores just that
-     flattened image + comment (snip drawings are baked in — no coordinates kept).
-   - **● Record** — hides the overlay and logs your clicks / field inputs (text, dropdowns,
-     radios/checkboxes) / **navigation** in the background as a repro flow; it **persists across
-     screens** (even full page reloads). Hit **Stop** when done.
-4. Type a comment, optionally `Ctrl+V` / drop a reference image, then **Save** (or `Esc` to cancel).
-5. Repeat for as many issues as you want — they queue up in `.nitpick/`.
-
-Then, in Claude Code:
+Back in Claude Code:
 
 ```shell
-/nitpick:process
+/nitpick:process     # Claude views each screenshot, opens the source line, and fixes it
 ```
 
-Claude reads the queue, views each annotated screenshot, opens the captured source line, and
-fixes the issues one by one — marking each resolved as it goes.
+## 🤝 With BMAD-METHOD
 
-### Change the hotkey
-
-The default is **`Ctrl+Shift+.`** (chosen to dodge browser/OS shortcuts like macOS
-`Cmd+Shift+Q` = Log Out). Override it by passing a `hotkey` prop where you mount the overlay —
-it's matched on the physical key (`event.code`), so it's keyboard-layout-proof:
-
-```tsx
-{process.env.NODE_ENV !== 'production' && (
-  <NitpickOverlay hotkey={{ alt: true, shift: true, code: 'KeyN' }} />
-)}
-```
-
-`code` accepts values like `'Period'`, `'Slash'`, `'Backquote'`, `'KeyN'`, `'Digit0'`;
-modifiers are `ctrl`, `meta` (Cmd/Win), `alt` (Option), and `shift`.
-
-## Use with BMAD-METHOD
-
-If your project uses [BMAD-METHOD](https://github.com/bmad-code-org/BMAD-METHOD), Nitpick routes
-feedback through BMAD's agents instead of editing code directly — it stays a *reporting* tool and
-lets the **dev** agent do the work.
+Using [BMAD](https://github.com/bmad-code-org/BMAD-METHOD)? Route feedback through its agents
+instead of editing code directly:
 
 ```shell
-/nitpick:bmad          # triage open feedback, then route it
+/nitpick:setup-bmad  # installs a BMAD-native "nitpick" agent (v6 skill / v4 agent)
+/nitpick:bmad        # triage feedback, then route it
 ```
 
-Each item is triaged into one of two dispositions:
+Each item is triaged into **quick-fix** (handed to the dev agent now) or **backlog** (turned into
+BMAD **stories** with `/nitpick:bmad stories <epic>` once the epic is done). Verified against
+**BMAD-METHOD v6.8**.
 
-- **quick-fix** → handed straight to the BMAD **dev** agent to implement now;
-- **backlog** → parked until the relevant epic is done, then `/nitpick:bmad stories <epic>`
-  turns those items into BMAD **stories** the dev agent picks up via the normal flow.
+## 🧠 How it works
 
-`/nitpick:process` auto-detects BMAD and points you to `/nitpick:bmad` rather than editing code
-behind the team's process. Two integration surfaces ship:
+Nitpick is **two artifacts joined by a file bridge** (full writeup in [`DESIGN.md`](./DESIGN.md)):
 
-- the **`nitpick-bmad`** Claude Code agent (works with any BMAD version), and
-- a **BMAD-native agent** — run `/nitpick:setup-bmad` to install Nitpick into `.bmad-core/agents/`
-  (it reads your existing agents to match your BMAD version's format) so you activate it like any
-  other BMAD agent.
+| Part | Where it runs | What it does |
+| --- | --- | --- |
+| **Overlay** (`templates/`) | the browser (dev-only) | capture: hotkey, annotate, screenshot, locators |
+| **Bridge** (dev API route) | your Next.js dev server | writes reports to `.nitpick/*.json` + images |
+| **Plugin** (this repo) | Claude Code | `/nitpick:*` commands + skill + BMAD agent that fix the queue |
 
-## How it finds the right line of code
+Record shots are **streamed to the server as you capture** (flat memory), screenshots are
+size-capped, and the overlay is **completely inert when idle**.
 
-Nitpick resolves the clicked element to a source location with a layered strategy that
-degrades gracefully (see [`DESIGN.md`](./DESIGN.md)):
+## 🎛 Command reference
 
-1. **`data-nitpick-src`** build-time stamp (most precise; opt-in Babel plugin) →
-2. **React Fiber `_debugSource`** (zero-config on React ≤ 18 / Next ≤ 14) →
-3. **Component name + stack + selector + text** (every React version) — enough for Claude to
-   `grep` straight to the file even without an exact line.
+| Command | What it does |
+| --- | --- |
+| `/nitpick:setup` | Scaffold the overlay + dev API route into a Next.js app (App or Pages router). |
+| `/nitpick:process` | Fix the `.nitpick/` queue in Claude (defers to BMAD if detected). |
+| `/nitpick:bmad` | Triage + route feedback through BMAD (`triage` / `quick-fix` / `backlog` / `stories` / `status`). |
+| `/nitpick:setup-bmad` | Install the BMAD-native Nitpick agent. |
+| `/nitpick:remove` | Reverse setup — remove overlay, route, mount, `.nitpick/`, and the dep. |
 
-> **Next 15 / React 19?** React 19 removed `_debugSource`, so step 2 yields nothing there — by
-> design. You still get precise component-level targeting from step 3, and exact lines if you
-> enable the optional build stamp. `/nitpick:setup` will offer it.
+## 🔒 Privacy & safety
 
-## What gets captured
+- **Local-only** — feedback is written to `.nitpick/` in your repo; the overlay sends nothing
+  anywhere else.
+- **Dev-only** — the overlay returns `null` and the API route returns `410` in production.
+- **Report-only** — Nitpick never edits your app or changes its behavior; fixing is a separate,
+  explicit step.
 
-Each report is a JSON file plus images in `.nitpick/`. See the full schema in
-[`DESIGN.md`](./DESIGN.md#the-data-contract-nitpicknnnjson). In short: your comment, the route,
-viewport, the element's source/component/selector/styles/box, vector annotations, an annotated
-screenshot of the element, and any reference image you pasted.
-
-## Privacy & safety
-
-- Everything stays **local** — feedback is written to `.nitpick/` in your repo. Nothing is
-  sent anywhere by the overlay.
-- The overlay and API route are **dev-only** and refuse to run in production.
-- `.nitpick/` is gitignored by default (your call to commit it or not).
-
-## Uninstall
-
-Nitpick is already inert in production (the overlay returns `null` and the route returns `410`
-when `NODE_ENV === 'production'`), so removal is about clean code, not safety. There are two
-independent parts:
-
-**1. Remove the scaffolded code from your app** — run the reverse of setup:
+## 🗑 Uninstall
 
 ```shell
-/nitpick:remove          # deletes the overlay + route, un-mounts from the layout,
-                         # drops the .gitignore line, removes .nitpick/, uninstalls html-to-image
-# flags: --keep-feedback (keep .nitpick/), --keep-dep (keep html-to-image)
+/nitpick:remove                          # remove scaffolded code from your app
+/plugin uninstall nitpick@nitpick-tools  # remove the plugin from Claude Code
 ```
 
-Or do it by hand: delete `components/nitpick/`, `app/api/nitpick/`, the `<NitpickOverlay />`
-mount in your layout, and the `.nitpick/` directory.
+## 🛣 Roadmap
 
-**2. Remove the plugin from Claude Code:**
+- Native HD capture (`getDisplayMedia`) toggle for pixel-perfect shots on huge pages.
+- MCP live-push (no "go process" step).
+- React SPA (Vite / CRA) bridge.
+- Multi-element batches.
 
-```shell
-/plugin disable nitpick@nitpick-tools     # temporary — re-enable later with /plugin enable
-/plugin uninstall nitpick@nitpick-tools   # permanent
-/plugin marketplace remove nitpick-tools  # optional: forget the marketplace too
-```
+See [`CHANGELOG.md`](./CHANGELOG.md) for what's shipped.
 
-## License
+## 🤝 Contributing
 
-MIT
+Issues and PRs welcome — see [`CONTRIBUTING.md`](./CONTRIBUTING.md). Be kind; we follow a
+[Code of Conduct](./CODE_OF_CONDUCT.md).
+
+## 📄 License
+
+[MIT](./LICENSE) © Lokeshwaran
+
+<div align="center">
+
+**If Nitpick saves you round-trips, please ⭐ the repo — it really helps.**
+
+</div>

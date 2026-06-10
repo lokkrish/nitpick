@@ -44,6 +44,7 @@
         <li class="nav-item"><a class="nav-link" href="#demo">Live demo</a></li>
         <li class="nav-item"><a class="nav-link" href="#get-started">Get started</a></li>
         <li class="nav-item"><a class="nav-link" href="#commands">Commands</a></li>
+        <li class="nav-item"><a class="nav-link" href="https://github.com/lokkrish/nitpick" target="_blank" rel="noopener"><i class="bi bi-github"></i> GitHub ★</a></li>
       </ul>
     </div>
   </div>
@@ -61,6 +62,7 @@
     <div class="d-flex gap-2 justify-content-center flex-wrap mt-4">
       <a href="#get-started" class="btn btn-np btn-lg px-4">Get started</a>
       <a href="#demo" class="btn btn-outline-light btn-lg px-4">Try the demo</a>
+      <a href="https://github.com/lokkrish/nitpick" target="_blank" rel="noopener" class="btn btn-outline-light btn-lg px-4"><i class="bi bi-github"></i> Star on GitHub</a>
     </div>
     <p class="mt-4 mb-0 small text-white-50">
       Activate with <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>.</kbd> · double-tap <kbd>Shift</kbd> · or the on-screen badge
@@ -78,7 +80,7 @@
         <div class="card h-100 border-0 shadow-sm"><div class="card-body">
           <i class="bi bi-cursor-fill feature-ico"></i>
           <h5 class="mt-3">1 · Capture (in the browser)</h5>
-          <p class="text-muted mb-0">A dev-only overlay lives in your Next.js app. Activate it, hover to inspect, click the broken element, annotate (circle / arrow / draw) and add a comment or reference image.</p>
+          <p class="text-muted mb-0">A dev-only overlay lives in your Next.js app. A draggable toolbox lets you <b>Inspect</b> (element + locators), <b>Draw</b> anywhere, <b>Snip</b> a region, or <b>Record</b> a multi-screen flow — then add a comment and Save.</p>
         </div></div>
       </div>
       <div class="col-md-4">
@@ -153,7 +155,7 @@
 <section id="get-started" class="py-5">
   <div class="container">
     <h2 class="fw-bold text-center mb-2">Get started</h2>
-    <p class="text-center text-muted mb-4">Pick your workflow. Replace <code>&lt;your-github-username&gt;</code> with the repo you install from (or use a local path).</p>
+    <p class="text-center text-muted mb-4">Pick your workflow. Replace <code>lokkrish</code> with the repo you install from (or use a local path).</p>
 
     <ul class="nav nav-pills justify-content-center mb-4" id="modeTabs" role="tablist">
       <li class="nav-item"><button class="nav-link active" data-bs-toggle="pill" data-bs-target="#solo" type="button">Claude only (standalone)</button></li>
@@ -167,7 +169,7 @@
           <div class="col-lg-4">
             <h5><span class="step-num me-2">1</span>Install</h5>
             <pre class="cmd"><span class="c"># in Claude Code</span>
-/plugin marketplace add &lt;your-github-username&gt;/nitpick
+/plugin marketplace add lokkrish/nitpick
 /plugin install nitpick@nitpick-tools
 
 <span class="c"># in your Next.js project</span>
@@ -209,7 +211,7 @@ npm run dev   <span class="c"># (re)start the dev server</span></pre>
           <div class="col-lg-4">
             <h5><span class="step-num me-2">1</span>Install</h5>
             <pre class="cmd"><span class="c"># in Claude Code</span>
-/plugin marketplace add &lt;your-github-username&gt;/nitpick
+/plugin marketplace add lokkrish/nitpick
 /plugin install nitpick@nitpick-tools
 
 <span class="c"># overlay (same as standalone)</span>

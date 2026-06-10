@@ -2,16 +2,20 @@
   "name": "nitpick-tools",
   "owner": {
     "name": "Lokeshwaran",
-    "email": "lokeshwaran2491@gmail.com"
+    "email": "lokeshwaran2491@gmail.com",
+    "url": "https://github.com/lokkrish"
   },
-  "description": "Visual UI feedback tooling for Claude Code.",
+  "description": "Visual UI feedback tooling for Claude Code (with BMAD-METHOD support).",
   "plugins": [
     {
       "name": "nitpick",
       "source": "./",
-      "description": "Capture UI issues visually in a running Next.js app and turn them into precise, source-located fixes.",
+      "description": "Point at a UI bug in your running Next.js app and turn it into a precise, source-located fix — solo with Claude, or routed through BMAD.",
+      "homepage": "https://github.com/lokkrish/nitpick",
+      "repository": "https://github.com/lokkrish/nitpick",
+      "license": "MIT",
       "category": "development",
-      "tags": ["ui", "nextjs", "react", "feedback"]
+      "tags": ["ui", "nextjs", "react", "feedback", "bmad", "annotation"]
     }
   ]
 }

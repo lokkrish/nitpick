@@ -1,6 +1,16 @@
 # Changelog
 
-## 0.2.9 — unreleased
+## 0.3.0 — public release 🎉
+
+First public, open-source release.
+
+- Polished README, landing/demo page (`docs/index.html`), and repo metadata pointing at
+  `github.com/lokkrish/nitpick`.
+- Open-source scaffolding: `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, GitHub issue
+  & PR templates, and a CI workflow that validates the plugin structure (`scripts/validate.mjs`).
+- No functional change to the overlay/plugin beyond docs/metadata.
+
+## 0.2.9
 
 - **Fix: dev-server memory climbing to OOM even when Nitpick wasn't being used.** On every mount
   the overlay restored a prior session from `sessionStorage` and could **silently auto-resume
