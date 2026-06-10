@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.2.4 — unreleased
+
+- **Record now captures every screen, not just the last one.** A full-page shot is taken on
+  recording start, on each navigation (debounced so the new screen renders), and on stop —
+  saved as `NNN-1.png`, `NNN-2.png`, … with their routes. New `screens[]` field
+  (`{ route, file }`); `captureType: "recording"`; the single `screenshot` is skipped for
+  recording reports. Shots are held in memory (so client-side navigation works) and persisted
+  best-effort to `sessionStorage` for full reloads. The fix skill reads each screen in order
+  alongside `actions`.
+
+## 0.2.3 — unreleased
+
+- **Nothing highlighted by default** — the Record button no longer carries a permanent accent
+  border that made it look pre-selected; the toolbox now opens with zero tools/buttons active.
+- **＋ Elements** toggle in **Draw** and **Snip** — when on, the report also captures the HTML
+  component details (Playwright-style locators, source/component, computed styles) of the
+  element(s) under your marks (Draw → the element each shape points at; Snip → elements sampled
+  inside the region), so the LLM gets full DOM context alongside the picture. Off by default.
+
 ## 0.2.2 — unreleased
 
 Toolbox UX refinements.

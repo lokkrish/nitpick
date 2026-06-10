@@ -115,7 +115,11 @@ This is the interface between browser and agent — keep it stable.
     { "type": "navigate", "at": "...", "url": "/about" },
     { "type": "input", "at": "...", "url": "/about", "locator": { "getBy": "getByRole('textbox', { name: \"Email\" })" }, "value": "a@b.com" }
   ],
-  "screenshot": "001.png",                // full-page or cropped region snip, annotations baked in; or null
+  "screens": [                            // recording: one full-page shot per screen visited, in order
+    { "route": "/", "file": "001-1.png" },
+    { "route": "/about", "file": "001-2.png" }
+  ],
+  "screenshot": "001.png",                // single-shot reports (draw/snip/full); null for recording
   "referenceImage": "001-ref.png"         // optional, user-supplied
 }
 ```
@@ -132,6 +136,13 @@ clicks / inputs / submits / navigations in the background, persisted in `session
 sequence **survives client-side and full-page navigations** (the overlay rehydrates the session
 on mount). Each action carries the URL + Playwright-style locator, so `actions` reads like a
 repro script the dev (or BMAD dev agent) can replay. Password inputs are redacted to `***`.
+
+**Snip + "＋ Elements" (v2.2/2.3):** **Snip** crops a region and lets the user draw on the
+cropped image; those drawings are **baked into the image** (no coordinates stored) and saved as
+the screenshot. By default a snip is image + comment only (`targets: []`). The optional
+**＋ Elements** toggle (available in Draw and Snip) adds DOM context to the report: in **Draw**,
+the element each shape points at is captured into `targets`; in **Snip**, the elements sampled
+inside the region are captured. Off by default — opt in when the LLM needs the component details.
 
 ## The fix loop (`skills/resolving-ui-feedback/SKILL.md`)
 

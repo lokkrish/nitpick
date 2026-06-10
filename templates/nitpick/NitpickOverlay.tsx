@@ -26,6 +26,7 @@ const Z = 2147483600;
 const ENDPOINT = '/api/nitpick';
 const REC_KEY = '__nitpick_rec';
 const ACT_KEY = '__nitpick_actions';
+const SHOT_KEY = '__nitpick_shots';
 
 // ----------------------------------------------------------------- hotkey
 
@@ -60,7 +61,7 @@ type Shape =
   | { type: 'ellipse'; cx: number; cy: number; rx: number; ry: number };
 
 interface Box { x: number; y: number; w: number; h: number }
-interface Snip { url: string; w: number; h: number; scale: number }
+interface Snip { url: string; w: number; h: number; scale: number; box: Box }
 interface Pt { x: number; y: number }
 
 interface Locators { role: string | null; name: string; testId: { attr: string; value: string } | null; getBy: string | null; css: string; xpath: string; outerTag: string }
@@ -70,6 +71,7 @@ interface Target {
   locators: Locators; boundingBox: Box; computedStyles: Record<string, string>;
 }
 interface Action { type: 'click' | 'input' | 'submit' | 'navigate'; at: string; url: string; locator?: Locators; tag?: string; text?: string; value?: string }
+interface ScreenShot { route: string; url: string }
 
 const isDrawTool = (t: Tool): t is DrawTool => t === 'arrow' || t === 'circle' || t === 'box' || t === 'pen';
 
@@ -171,6 +173,28 @@ function nonPenShape(tool: Tool, s: Pt, p: Pt): Shape {
   if (tool === 'circle') return { type: 'ellipse', cx: (s.x + p.x) / 2, cy: (s.y + p.y) / 2, rx: Math.abs(p.x - s.x) / 2, ry: Math.abs(p.y - s.y) / 2 };
   return { type: 'rect', x: Math.min(s.x, p.x), y: Math.min(s.y, p.y), w: Math.abs(p.x - s.x), h: Math.abs(p.y - s.y) }; // box / snip marquee
 }
+// Where a drawn shape "points": arrow tip, shape center, or pen centroid (PAGE coords).
+function anchorOf(s: Shape): Pt {
+  if (s.type === 'arrow') return { x: s.x2, y: s.y2 };
+  if (s.type === 'rect') return { x: s.x + s.w / 2, y: s.y + s.h / 2 };
+  if (s.type === 'ellipse') return { x: s.cx, y: s.cy };
+  const n = s.pts.length || 1;
+  return { x: s.pts.reduce((a, [x]) => a + x, 0) / n, y: s.pts.reduce((a, [, y]) => a + y, 0) / n };
+}
+function elementAtPage(px: number, py: number): Element | null {
+  const el = document.elementFromPoint(px - window.scrollX, py - window.scrollY);
+  if (!el || (el as HTMLElement).closest?.('[data-nitpick-ui]') || el === document.body || el === document.documentElement) return null;
+  return el;
+}
+// Sample a grid inside a region (PAGE coords) and return the unique elements found there.
+function elementsInBox(box: Box): Element[] {
+  const out: Element[] = []; const seen = new Set<Element>();
+  for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) {
+    const el = elementAtPage(box.x + (box.w * (i + 0.5)) / 4, box.y + (box.h * (j + 0.5)) / 4);
+    if (el && !seen.has(el)) { seen.add(el); out.push(el); }
+  }
+  return out.slice(0, 8);
+}
 
 // ----------------------------------------------------------------- screenshot
 
@@ -226,6 +250,15 @@ async function cropRegion(box: Box): Promise<string | null> {
     return canvas.toDataURL('image/png');
   } catch { return null; }
 }
+// A lighter full-page capture for per-screen record shots (capped dpr to keep size sane).
+async function recordShot(): Promise<string | null> {
+  try {
+    const mod: any = await import('html-to-image').catch(() => null);
+    if (!mod || !mod.toPng) return null;
+    const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+    return await mod.toPng(document.documentElement, { pixelRatio: dpr, cacheBust: true, filter: (n: any) => !(n && n.dataset && n.dataset.nitpickUi) });
+  } catch { return null; }
+}
 async function flattenSnip(url: string, shapes: Shape[]): Promise<string> {
   try {
     const img = await loadImg(url);
@@ -241,7 +274,9 @@ async function flattenSnip(url: string, shapes: Shape[]): Promise<string> {
 
 function loadActions(): Action[] { try { return JSON.parse(sessionStorage.getItem(ACT_KEY) || '[]'); } catch { return []; } }
 function saveActions(a: Action[]) { try { sessionStorage.setItem(ACT_KEY, JSON.stringify(a)); } catch { /* ignore */ } }
-function clearSessionStore() { try { sessionStorage.removeItem(ACT_KEY); sessionStorage.removeItem(REC_KEY); } catch { /* ignore */ } }
+function loadShots(): ScreenShot[] { try { return JSON.parse(sessionStorage.getItem(SHOT_KEY) || '[]'); } catch { return []; } }
+function saveShots(s: ScreenShot[]) { try { sessionStorage.setItem(SHOT_KEY, JSON.stringify(s)); } catch { /* quota — keep them in memory only */ } }
+function clearSessionStore() { try { sessionStorage.removeItem(ACT_KEY); sessionStorage.removeItem(REC_KEY); sessionStorage.removeItem(SHOT_KEY); } catch { /* ignore */ } }
 
 // ----------------------------------------------------------------- component
 
@@ -262,7 +297,10 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
   const [snip, setSnip] = useState<Snip | null>(null); // snip editor open when set
   const [snipShapes, setSnipShapes] = useState<Shape[]>([]); // baked into image, never persisted as coords
   const [snipDraft, setSnipDraft] = useState<Shape | null>(null);
+  const [snipTargets, setSnipTargets] = useState<Target[]>([]); // elements under the snip region (if "+ Elements")
+  const [addElements, setAddElements] = useState(false); // capture HTML component details under draws/snips
   const [actions, setActions] = useState<Action[]>([]);
+  const [recordShots, setRecordShots] = useState<ScreenShot[]>([]); // one full-page shot per screen visited while recording
   const [hovered, setHovered] = useState<DOMRect | null>(null);
   const [comment, setComment] = useState('');
   const [referenceImage, setReferenceImage] = useState<string | null>(null);
@@ -275,6 +313,19 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
   const snipStart = useRef<Pt | null>(null);
   const dragOff = useRef<Pt | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const shotTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const prevRec = useRef(false);
+
+  const captureRecordShot = useCallback(async () => {
+    const route = location.pathname + location.search;
+    const url = await recordShot();
+    if (!url) return;
+    setRecordShots((prev) => { const next = [...prev, { route, url }].slice(-20); saveShots(next); return next; });
+  }, []);
+  const scheduleShot = useCallback((delay: number) => {
+    if (shotTimer.current) clearTimeout(shotTimer.current);
+    shotTimer.current = setTimeout(() => { void captureRecordShot(); }, delay);
+  }, [captureRecordShot]);
 
   const showToast = useCallback((m: string) => {
     setToast(m);
@@ -285,8 +336,10 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
   const close = useCallback(() => {
     setActive(false); setRecording(false); setTool(null); setDrawOpen(false);
     setShapes([]); setDraft(null); setTargets([]); setSnip(null); setSnipShapes([]); setSnipDraft(null);
-    setActions([]); setHovered(null); setComment(''); setReferenceImage(null); setSubmitting(false);
+    setSnipTargets([]); setAddElements(false);
+    setActions([]); setRecordShots([]); setHovered(null); setComment(''); setReferenceImage(null); setSubmitting(false);
     drawStart.current = null; snipStart.current = null;
+    if (shotTimer.current) clearTimeout(shotTimer.current);
     clearSessionStore();
   }, []);
 
@@ -301,9 +354,9 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
     // eslint-disable-next-line no-console
     console.info(`[Nitpick] ready — ${hotkeyLabel(hotkey)} / double-tap Shift / click the badge.`);
     try {
-      const acts = loadActions(); const wasRec = sessionStorage.getItem(REC_KEY) === '1';
-      if (acts.length || wasRec) {
-        setActions(acts); setActive(true); setRecording(wasRec); setTool(null);
+      const acts = loadActions(); const shots = loadShots(); const wasRec = sessionStorage.getItem(REC_KEY) === '1';
+      if (acts.length || shots.length || wasRec) {
+        setActions(acts); setRecordShots(shots); setActive(true); setRecording(wasRec); setTool(null);
         setPos({ x: Math.max(8, (window.innerWidth - 520) / 2), y: 14 });
         showToast('📍 Nitpick session resumed');
       }
@@ -375,6 +428,7 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
     const record = (a: Omit<Action, 'at' | 'url'>) =>
       setActions((prev) => { const next = [...prev, { ...a, at: new Date().toISOString(), url: location.pathname + location.search }]; saveActions(next); return next; });
     record({ type: 'navigate' });
+    scheduleShot(450); // snapshot this screen once it settles
     const onClick = (e: MouseEvent) => {
       if (onUi(e.target) || !(e.target instanceof Element)) return;
       const el = interactiveAncestor(e.target);
@@ -391,7 +445,7 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
       if (t instanceof HTMLTextAreaElement) { record({ type: 'input', locator: buildLocators(t), value: String(t.value).slice(0, 120) }); }
     };
     const onSubmit = (e: Event) => { if (!onUi(e.target) && e.target instanceof Element) record({ type: 'submit', locator: buildLocators(e.target) }); };
-    const onNav = () => record({ type: 'navigate' });
+    const onNav = () => { record({ type: 'navigate' }); scheduleShot(750); }; // new screen needs a moment to render
     document.addEventListener('click', onClick, true);
     document.addEventListener('change', onChange, true);
     document.addEventListener('submit', onSubmit, true);
@@ -404,7 +458,13 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
       document.removeEventListener('submit', onSubmit, true); window.removeEventListener('popstate', onNav);
       history.pushState = origPush; history.replaceState = origReplace;
     };
-  }, [active, recording]);
+  }, [active, recording, scheduleShot]);
+
+  // snapshot the final screen when recording stops
+  useEffect(() => {
+    if (prevRec.current && !recording && active) void captureRecordShot();
+    prevRec.current = recording;
+  }, [recording, active, captureRecordShot]);
 
   useEffect(() => { if (active && !recording) { try { sessionStorage.removeItem(REC_KEY); } catch { /* ignore */ } } }, [active, recording]);
 
@@ -436,16 +496,26 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
     else setDraft(nonPenShape(tool, s, p));
   };
   const onPageUp = async () => {
-    const d = draft; const s = drawStart.current; drawStart.current = null; setDraft(null);
+    const d = draft; drawStart.current = null; setDraft(null);
     if (!d) return;
     if (tool === 'snip') {
       if (d.type === 'rect' && d.w > 6 && d.h > 6) {
-        const url = await withTimeout(cropRegion({ x: d.x, y: d.y, w: d.w, h: d.h }), 8000, null);
-        if (url) { const img = await loadImg(url); const scale = Math.min(Math.min(window.innerWidth * 0.8, 900) / img.width, (window.innerHeight * 0.65) / img.height, 1); setSnip({ url, w: img.width, h: img.height, scale }); setSnipShapes([]); setTool('arrow'); setDrawOpen(true); }
-        else showToast('Snip failed (html-to-image)');
+        const box = { x: d.x, y: d.y, w: d.w, h: d.h };
+        const els = elementsInBox(box).map(captureTarget); // captured now, while the region is on-screen
+        const url = await withTimeout(cropRegion(box), 8000, null);
+        if (url) {
+          const img = await loadImg(url);
+          const scale = Math.min(Math.min(window.innerWidth * 0.8, 900) / img.width, (window.innerHeight * 0.65) / img.height, 1);
+          setSnip({ url, w: img.width, h: img.height, scale, box }); setSnipShapes([]); setSnipTargets(els); setTool('arrow'); setDrawOpen(true);
+        } else showToast('Snip failed (html-to-image)');
       }
-      void s;
-    } else { setShapes((arr) => [...arr, d]); }
+    } else {
+      setShapes((arr) => [...arr, d]);
+      if (addElements) {
+        const a = anchorOf(d); const el = elementAtPage(a.x, a.y);
+        if (el) { const tgt = captureTarget(el); setTargets((t) => (t.some((x) => x.locators.css === tgt.locators.css) ? t : [...t, tgt])); }
+      }
+    }
   };
 
   // ----- snip-editor drawing (image-local coords, baked into the image — no stored coords) -----
@@ -480,27 +550,35 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
     setSubmitting(true);
     try {
       const isSnip = !!snip;
-      let screenshot: string | null;
+      const hasDrawing = !!draft || shapes.length > 0;
+      const isRecording = !isSnip && recordShots.length > 0;
+      const screens = isRecording ? recordShots.map((s) => ({ route: s.route, image: s.url })) : [];
+      let screenshot: string | null = null;
       if (isSnip && snip) screenshot = await withTimeout(flattenSnip(snip.url, snipShapes), 8000, snip.url);
-      else { const all = draft ? [...shapes, draft] : shapes; screenshot = await withTimeout(captureFull(all), 8000, null); }
+      else if (hasDrawing) { const all = draft ? [...shapes, draft] : shapes; screenshot = await withTimeout(captureFull(all), 8000, null); }
+      else if (!isRecording) screenshot = await withTimeout(captureFull([]), 8000, null);
+      // (recording report: per-screen images live in `screens`, so the single screenshot is skipped)
+      // "+ Elements": include HTML component details. Snip → region elements; Draw → anchored targets.
+      const reportTargets = isSnip ? (addElements ? snipTargets : []) : targets;
       const payload = {
         comment,
         route: window.location.pathname + window.location.search,
         viewport: { width: window.innerWidth, height: window.innerHeight, dpr: window.devicePixelRatio || 1, scrollX: window.scrollX, scrollY: window.scrollY },
-        captureType: isSnip ? 'snip' : 'full',
+        captureType: isSnip ? 'snip' : isRecording ? 'recording' : 'full',
         coordSpace: isSnip ? null : 'page',
         // snip drawings are baked into the image — no coordinates are stored
         annotations: isSnip ? [] : (draft ? [...shapes, draft] : shapes),
-        targets: isSnip ? [] : targets,
-        element: isSnip ? null : (targets[0] ?? null),
+        targets: reportTargets,
+        element: reportTargets[0] ?? null,
         actions,
+        screens,
         screenshot, referenceImage,
       };
       const res = await fetch(ENDPOINT, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) });
       const data = await res.json().catch(() => ({}));
       if (res.ok) { showToast(`📍 Saved feedback #${data.id ?? ''}`); close(); } else showToast(`Save failed (${res.status})`);
     } catch { showToast('Save failed — is the dev server running?'); } finally { setSubmitting(false); }
-  }, [submitting, snip, snipShapes, shapes, draft, comment, targets, actions, referenceImage, close, showToast]);
+  }, [submitting, snip, snipShapes, snipTargets, addElements, shapes, draft, comment, targets, actions, recordShots, referenceImage, close, showToast]);
 
   if (!mounted) return null;
 
@@ -528,7 +606,7 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
       {active && recording && (
         <div data-nitpick-ui style={{ position: 'fixed', bottom: 16, left: '50%', transform: 'translateX(-50%)', display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderRadius: 999, background: 'rgba(20,20,22,0.95)', color: '#fff', boxShadow: '0 4px 20px rgba(0,0,0,0.45)', pointerEvents: 'auto', fontSize: 12 }}>
           <span style={{ width: 9, height: 9, borderRadius: '50%', background: ACCENT, boxShadow: '0 0 0 3px rgba(255,45,85,0.3)' }} />
-          Recording · {actions.length} action{actions.length === 1 ? '' : 's'}
+          Recording · {actions.length} action{actions.length === 1 ? '' : 's'} · {recordShots.length} screen{recordShots.length === 1 ? '' : 's'}
           <button onClick={() => setRecording(false)} style={{ ...toolBtn(false), padding: '4px 10px' }}>■ Stop</button>
         </div>
       )}
@@ -569,8 +647,9 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
                   {(['arrow', 'circle', 'box', 'pen'] as DrawTool[]).map((t) => (
                     <button key={t} onClick={() => setTool(t)} style={toolBtn(tool === t)}>{drawIcon(t)}</button>
                   ))}
+                  <button onClick={() => setAddElements((v) => !v)} title="Include HTML component details of the elements inside this snip" style={toolBtn(addElements)}>＋ Elements{addElements ? ` ✓ (${snipTargets.length})` : ''}</button>
                   <button onClick={() => setSnipShapes((a) => a.slice(0, -1))} disabled={!snipShapes.length} style={toolBtn(false)}>↩</button>
-                  <button onClick={() => { setSnip(null); setSnipShapes([]); setSnipDraft(null); }} title="Discard snip" style={toolBtn(false)}>✕</button>
+                  <button onClick={() => { setSnip(null); setSnipShapes([]); setSnipDraft(null); setSnipTargets([]); }} title="Discard snip" style={toolBtn(false)}>✕</button>
                 </div>
                 <div style={{ position: 'relative', width: snip.w * snip.scale, height: snip.h * snip.scale }}>
                   {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -598,16 +677,16 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
               <button onClick={() => pickTool('inspect')} style={toolBtn(tool === 'inspect')}>⌖ Inspect</button>
               <button onClick={() => { setDrawOpen((o) => !o || !isDrawTool(tool)); if (!isDrawTool(tool)) setTool('arrow'); }} style={toolBtn(isDrawTool(tool))}>✎ Draw ▾</button>
               <button onClick={() => pickTool('snip')} style={toolBtn(tool === 'snip')}>✂ Snip</button>
-              <button onClick={() => setRecording(true)} title="Record clicks / inputs / navigation across screens" style={{ ...toolBtn(false), borderColor: ACCENT }}>● Record</button>
+              <button onClick={() => setRecording(true)} title="Record clicks / inputs / navigation across screens" style={toolBtn(false)}>● Record</button>
               <button onClick={undo} title="Undo" style={{ ...toolBtn(false), marginLeft: 'auto' }}>↩</button>
               <button onClick={close} title="Close (Esc)" style={toolBtn(false)}>✕</button>
             </div>
             {drawOpen && (
-              <div style={{ display: 'flex', gap: 6, padding: '8px 10px', borderBottom: '1px solid #333' }}>
+              <div style={{ display: 'flex', gap: 6, padding: '8px 10px', borderBottom: '1px solid #333', alignItems: 'center' }}>
                 {(['arrow', 'circle', 'box', 'pen'] as DrawTool[]).map((t) => (
                   <button key={t} onClick={() => setTool(t)} style={toolBtn(tool === t)}>{drawIcon(t)}</button>
                 ))}
-                <span style={{ fontSize: 10, opacity: 0.55, alignSelf: 'center', marginLeft: 6 }}>draw anywhere on the page</span>
+                <button onClick={() => setAddElements((v) => !v)} title="Also capture the HTML component details of the element under each mark" style={{ ...toolBtn(addElements), marginLeft: 'auto' }}>＋ Elements{addElements ? ' ✓' : ''}</button>
               </div>
             )}
             <div style={{ padding: 10, display: 'flex', gap: 10, alignItems: 'flex-start' }}

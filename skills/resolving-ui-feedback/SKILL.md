@@ -31,8 +31,11 @@ correct code fix. (For how reports are produced and the full data contract, see 
 1. **Load the queue.** Read `.nitpick/queue.json`. No open items → say so and remind the user
    to capture issues with Ctrl+Shift+. (period). Done.
 2. **For each open item** (`.nitpick/<id>.json`):
-   a. **See it.** Read `<id>.png` — the accent-colored circle/arrow/freehand marks the exact
-      problem area. Read `<id>-ref.png` if present — that's the user's target look.
+   a. **See it.** Read `<id>.png` — the accent-colored marks point at the exact problem area.
+      Read `<id>-ref.png` if present — that's the user's target look. If the item is a
+      **recording** (`captureType: "recording"`), there's no single `<id>.png`; instead read
+      every `screens[].file` (`<id>-1.png`, `<id>-2.png`, …) in order — one per screen the user
+      visited — and pair them with `actions` to follow the flow across pages.
    b. **Locate the code.** A report may reference several elements (`targets[]`) or none
       (a free-form visual/region note). For each entry in `targets` (fall back to `element` =
       `targets[0]` on older reports):

@@ -71,6 +71,19 @@ export async function POST(req: Request) {
     await fs.writeFile(path.join(DIR, referenceImage), ref.buf);
   }
 
+  // Per-screen record shots → <id>-1.png, <id>-2.png, ...
+  const screens: Array<{ route: string | null; file: string }> = [];
+  if (Array.isArray(body.screens)) {
+    for (let i = 0; i < body.screens.length; i++) {
+      const s = body.screens[i];
+      const img = dataUrlToBuffer(s && s.image);
+      if (!img) continue;
+      const file = `${id}-${i + 1}.${img.ext}`;
+      await fs.writeFile(path.join(DIR, file), img.buf);
+      screens.push({ route: s && typeof s.route === 'string' ? s.route : null, file });
+    }
+  }
+
   const record = {
     id,
     status: 'open',
@@ -85,6 +98,7 @@ export async function POST(req: Request) {
     targets: Array.isArray(body.targets) ? body.targets : [],
     annotations: Array.isArray(body.annotations) ? body.annotations : [],
     actions: Array.isArray(body.actions) ? body.actions : [],
+    screens,
     screenshot,
     referenceImage,
   };
