@@ -61,6 +61,28 @@ Playwright-style locators, and a screenshot. Reporting and fixing stay cleanly s
 - 🔒 **Dev-only & report-only** — never runs in production, never changes your app's behavior;
   everything stays local in `.nitpick/`.
 
+## 🧭 Which tool should I use?
+
+Three capture tools, three jobs. Pick by **what kind of issue** you're reporting:
+
+| Tool | Reach for it when the problem is… | Ideal cases | Saves |
+| --- | --- | --- | --- |
+| 🎯 **Inspect** | **a specific element** | Wrong color / size / spacing / font / copy on a known component; a missing or broken state; anytime you want Claude to land on the **exact source line + styles**. Click several elements — each is captured with its own locators **and image**. | `001-1.png`, `001-2.png`, … + element metadata |
+| ✂️ **Snip** | **a region, or how things relate** | Alignment / overlap / overflow / uneven spacing between sections; hover-only or hard-to-click UI (menus, tooltips, charts, `<canvas>`, images); when you want to **draw arrows/circles** to explain it. | one flat annotated `001.png` |
+| 🎬 **Record** | **a bug that takes steps to trigger** | Multi-step or **cross-page** flows; form validation, post-submit state, "it breaks on step 3"; behavior bugs where the *path* matters. Gives Claude an exact **repro script**. | ordered `actions` (no images) |
+
+> 💡 **Pair any tool with a reference image** — paste or drop one into the comment box when you
+> have a target design/look you want the result to match.
+>
+> **Rule of thumb:** one element → **Inspect** · a layout/area → **Snip** · a sequence → **Record**.
+
+### Examples
+
+- *"This Upgrade button is the wrong shade of red."* → **Inspect** the button.
+- *"The hero heading and the subtext don't line up; here's the Figma."* → **Inspect** both (or **Snip** the region) + paste the reference.
+- *"These two dashboard cards overflow their container on mobile."* → **Snip** the region.
+- *"After I fill the signup form and hit Next, the error appears on the wrong field."* → **Record** the flow.
+
 ## 🚀 Quickstart (Claude Code)
 
 ```shell
