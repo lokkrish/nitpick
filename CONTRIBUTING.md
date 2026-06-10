@@ -44,8 +44,8 @@ claude plugin validate . --strict
 
 - **Keep it dev-only & report-only.** The overlay must never run in production or mutate the host
   app. The API route must stay gated to `NODE_ENV !== 'production'`.
-- **Memory-safe by construction.** Captures are size-capped and streamed to the server; the
-  overlay must be inert when idle (no timers/listeners/requests while inactive).
+- **Memory-safe by construction.** Captures are bounded to a single region (never the whole long
+  page), and the overlay must be inert when idle (no timers/listeners/requests while inactive).
 - **Match the data contract** in `DESIGN.md`. If you add a field, update the contract, both route
   handlers, and the fix skill.
 - **No new runtime dependencies** in the overlay beyond React + an optional `html-to-image`

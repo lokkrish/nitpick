@@ -13,12 +13,8 @@ import path from 'path';
 export const config = { api: { bodyParser: { sizeLimit: '20mb' } } };
 
 const DIR = path.join(process.cwd(), '.nitpick');
-const DRAFT_DIR = path.join(DIR, '.draft');
 const isDev = () => process.env.NODE_ENV !== 'production';
 const pad = (n: number) => String(n).padStart(3, '0');
-const safeId = (s: unknown): string | null => (typeof s === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(s) ? s : null);
-
-interface DraftMeta { file: string; route: string | null }
 
 interface Queue {
   items: Array<{ id: string; status: string; comment: string; route: string | null }>;
@@ -57,28 +53,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   const body = req.body ?? {};
-  const op = typeof body.op === 'string' ? body.op : 'save';
-
-  // stream a single record-shot into a draft folder
-  if (op === 'stage') {
-    const draftId = safeId(body.draftId);
-    const img = dataUrlToBuffer(body.image);
-    if (!draftId || !img) return res.status(400).send('Bad stage request');
-    const dir = path.join(DRAFT_DIR, draftId);
-    await fs.mkdir(dir, { recursive: true });
-    let meta: DraftMeta[] = [];
-    try { meta = JSON.parse(await fs.readFile(path.join(dir, 'meta.json'), 'utf8')); } catch { /* new */ }
-    const file = `${pad(meta.length + 1)}.${img.ext}`;
-    await fs.writeFile(path.join(dir, file), img.buf);
-    meta.push({ file, route: typeof body.route === 'string' ? body.route : null });
-    await fs.writeFile(path.join(dir, 'meta.json'), JSON.stringify(meta));
-    return res.status(200).json({ ok: true, index: meta.length });
-  }
-  if (op === 'discard') {
-    const draftId = safeId(body.draftId);
-    if (draftId) await fs.rm(path.join(DRAFT_DIR, draftId), { recursive: true, force: true }).catch(() => {});
-    return res.status(200).json({ ok: true });
-  }
 
   await fs.mkdir(DIR, { recursive: true });
   const queue = await readQueue();
@@ -98,36 +72,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     await fs.writeFile(path.join(DIR, referenceImage), ref.buf);
   }
 
-  // Per-screen record shots → <id>-1.png, <id>-2.png, ...
-  const screens: Array<{ route: string | null; file: string }> = [];
-  // 1) promote streamed draft shots
-  const draftId = safeId(body.draftId);
-  if (draftId) {
-    const dir = path.join(DRAFT_DIR, draftId);
-    try {
-      const meta: DraftMeta[] = JSON.parse(await fs.readFile(path.join(dir, 'meta.json'), 'utf8'));
-      for (const m of meta) {
-        const ext = m.file.split('.').pop() || 'png';
-        const dest = `${id}-${screens.length + 1}.${ext}`;
-        const src = path.join(dir, m.file);
-        try { await fs.rename(src, path.join(DIR, dest)); }
-        catch { await fs.writeFile(path.join(DIR, dest), await fs.readFile(src)); }
-        screens.push({ route: m.route ?? null, file: dest });
-      }
-    } catch { /* no draft */ }
-    await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
-  }
-  // 2) inline screens (back-compat), numbered after staged
-  if (Array.isArray(body.screens)) {
-    for (const s of body.screens) {
-      const img = dataUrlToBuffer(s && s.image);
-      if (!img) continue;
-      const file = `${id}-${screens.length + 1}.${img.ext}`;
-      await fs.writeFile(path.join(DIR, file), img.buf);
-      screens.push({ route: s && typeof s.route === 'string' ? s.route : null, file });
-    }
-  }
-
   const record = {
     id,
     status: 'open',
@@ -136,13 +80,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     route: typeof body.route === 'string' ? body.route : null,
     viewport: body.viewport ?? null,
     captureType: typeof body.captureType === 'string' ? body.captureType : null,
-    region: body.region ?? null,
     coordSpace: typeof body.coordSpace === 'string' ? body.coordSpace : null,
     element: body.element ?? null,
     targets: Array.isArray(body.targets) ? body.targets : [],
     annotations: Array.isArray(body.annotations) ? body.annotations : [],
     actions: Array.isArray(body.actions) ? body.actions : [],
-    screens,
     screenshot,
     referenceImage,
   };

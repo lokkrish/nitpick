@@ -1,16 +1,18 @@
 'use client';
 
 /**
- * Nitpick — in-app visual feedback overlay (dev-only). v2.2.
+ * Nitpick — in-app visual feedback overlay (dev-only). v2.4.
  *
  * Activate (Ctrl+Shift+. / double-tap Shift / click the badge) → a draggable toolbox appears
  * with NOTHING selected. Tools:
  *   • Inspect  — capture element(s) + Playwright-style locators (stays active for multi-select)
- *   • Draw     — Arrow / Circle / Box / Pen, drawn anywhere on the page (vector annotations)
- *   • Snip     — drag a region, mark it up on the cropped image; saved as a flat image + comment
- *                (drawings are baked into the image — no coordinates are stored)
+ *   • Draw     — Arrow / Circle / Box / Pen, drawn anywhere on the page (vector annotations).
+ *                On Save we capture exactly the viewport you're looking at and bake the marks in.
+ *   • Snip     — drag a region; we capture exactly that region (at any scroll position), then you
+ *                mark it up on the cropped image. Saved as a flat image + comment (drawings baked
+ *                into the image — no coordinates are stored).
  *   • Record   — hide the overlay and log clicks / inputs / dropdowns / radios / navigation in
- *                the background, persisted across screens (incl. full reloads)
+ *                the background, across screens. Records the ACTION FLOW only (no screenshots).
  * Add a comment / reference image, then Save → POST to /api/nitpick → `.nitpick/`.
  *
  * Self-contained: only React + ./nitpick-source. Screenshots are best-effort via an optional
@@ -24,10 +26,6 @@ import { resolveElementInfo, type ElementInfo } from './nitpick-source';
 const ACCENT = '#ff2d55';
 const Z = 2147483600;
 const ENDPOINT = '/api/nitpick';
-const REC_KEY = '__nitpick_rec';
-const ACT_KEY = '__nitpick_actions';
-const SHOT_KEY = '__nitpick_shots';
-const DRAFT_KEY = '__nitpick_draft';
 
 // ----------------------------------------------------------------- hotkey
 
@@ -72,7 +70,6 @@ interface Target {
   locators: Locators; boundingBox: Box; computedStyles: Record<string, string>;
 }
 interface Action { type: 'click' | 'input' | 'submit' | 'navigate'; at: string; url: string; locator?: Locators; tag?: string; text?: string; value?: string }
-interface ScreenShot { route: string } // image is streamed to the server draft; only the ref is kept client-side
 
 const isDrawTool = (t: Tool): t is DrawTool => t === 'arrow' || t === 'circle' || t === 'box' || t === 'pen';
 
@@ -174,7 +171,10 @@ function nonPenShape(tool: Tool, s: Pt, p: Pt): Shape {
   if (tool === 'circle') return { type: 'ellipse', cx: (s.x + p.x) / 2, cy: (s.y + p.y) / 2, rx: Math.abs(p.x - s.x) / 2, ry: Math.abs(p.y - s.y) / 2 };
   return { type: 'rect', x: Math.min(s.x, p.x), y: Math.min(s.y, p.y), w: Math.abs(p.x - s.x), h: Math.abs(p.y - s.y) }; // box / snip marquee
 }
+
 // ----------------------------------------------------------------- screenshot
+
+const nitpickFilter = (n: any) => !(n && n.dataset && n.dataset.nitpickUi);
 
 function loadImg(src: string): Promise<HTMLImageElement> {
   return new Promise((res, rej) => { const img = new Image(); img.onload = () => res(img); img.onerror = rej; img.src = src; });
@@ -200,71 +200,50 @@ function drawShapes(ctx: CanvasRenderingContext2D, shapes: Shape[], dpr: number,
     }
   }
 }
-const nitpickFilter = (n: any) => !(n && n.dataset && n.dataset.nitpickUi);
-
-// Snapshot the whole document to a PNG data URL. html-to-image renders document.documentElement
-// from the page origin, but when the page is scrolled the captured content is shifted by the
-// scroll amount (a known html-to-image issue) — so snip/draw on a scrolled (long) page came out
-// misaligned or blank. We scroll to the top for the capture and restore the exact scroll right
-// after, so page coordinates always line up with the captured image. `pr` is pre-budgeted by the
-// caller (see cappedRatio) to keep tall pages within the browser's max-canvas size.
-async function snapshotDoc(pr: number): Promise<string | null> {
+function pageBackground(): string {
+  try {
+    for (const el of [document.body, document.documentElement]) {
+      const c = el && getComputedStyle(el).backgroundColor;
+      if (c && !/^rgba?\(0,\s*0,\s*0,\s*0\)$|transparent/.test(c)) return c;
+    }
+  } catch { /* ignore */ }
+  return '#ffffff';
+}
+// Capture an arbitrary PAGE-coordinate region as a PNG — correct at ANY scroll position.
+// html-to-image renders document.documentElement from the page's top-left and, left to itself,
+// clips to a single viewport height (that's why earlier captures only ever showed the top of the
+// page). We instead give it an explicit frame the size of the region and shift the cloned
+// document up/left by the region's origin, so exactly [x, y, w, h] of the page lands in the frame.
+// The frame is a bounded region (never the whole long page), so it always stays within the
+// browser's max-canvas size. Returns the data URL + the pixel ratio used.
+async function captureRegion(box: Box): Promise<{ url: string; pr: number } | null> {
   const mod: any = await import('html-to-image').catch(() => null);
   if (!mod || !mod.toPng) return null;
-  const sx = window.scrollX, sy = window.scrollY;
+  const pr = Math.min(window.devicePixelRatio || 1, 2);
+  const w = Math.max(1, Math.round(box.w)); const h = Math.max(1, Math.round(box.h));
   try {
-    if (sx || sy) { window.scrollTo(0, 0); await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))); }
-    return await mod.toPng(document.documentElement, { pixelRatio: pr, cacheBust: true, filter: nitpickFilter });
-  } catch { return null; } finally { if (sx || sy) window.scrollTo(sx, sy); }
+    const url: string = await mod.toPng(document.documentElement, {
+      width: w, height: h, pixelRatio: pr, cacheBust: true, backgroundColor: pageBackground(), filter: nitpickFilter,
+      style: { margin: '0', transform: `translate(${-box.x}px, ${-box.y}px)`, transformOrigin: 'top left' },
+    });
+    return { url, pr };
+  } catch { return null; }
 }
-async function captureFull(shapes: Shape[]): Promise<string | null> {
-  const pr = cappedRatio(1600, 5000, 2);
-  const dataUrl = await snapshotDoc(pr);
-  if (!dataUrl || !shapes.length) return dataUrl;
+// Draw report: capture exactly the viewport the user is looking at, then composite the vector
+// annotations (stored in PAGE coords) into it in viewport space (page coord − scroll origin).
+async function captureDrawing(shapes: Shape[]): Promise<string | null> {
+  const box: Box = { x: window.scrollX, y: window.scrollY, w: window.innerWidth, h: window.innerHeight };
+  const cap = await captureRegion(box);
+  if (!cap || !shapes.length) return cap ? cap.url : null;
   try {
-    const img = await loadImg(dataUrl);
+    const img = await loadImg(cap.url);
     const canvas = document.createElement('canvas'); canvas.width = img.width; canvas.height = img.height;
-    const ctx = canvas.getContext('2d'); if (!ctx) return dataUrl;
-    ctx.drawImage(img, 0, 0); drawShapes(ctx, shapes, pr, 0, 0); // shapes are PAGE coords → align with the from-origin capture
+    const ctx = canvas.getContext('2d'); if (!ctx) return cap.url;
+    ctx.drawImage(img, 0, 0); drawShapes(ctx, shapes, cap.pr, box.x, box.y);
     return canvas.toDataURL('image/png');
-  } catch { return dataUrl; }
+  } catch { return cap.url; }
 }
-async function cropRegion(box: Box): Promise<string | null> {
-  // Budget the ratio against the FULL page so the intermediate full-page render stays within the
-  // browser's max-canvas size on long pages; then crop the (page-coordinate) region out of it.
-  const pr = cappedRatio(2000, 8000, 2);
-  const dataUrl = await snapshotDoc(pr);
-  if (!dataUrl) return null;
-  try {
-    const img = await loadImg(dataUrl);
-    const cw = Math.max(1, Math.round(box.w * pr)); const ch = Math.max(1, Math.round(box.h * pr));
-    const canvas = document.createElement('canvas'); canvas.width = cw; canvas.height = ch;
-    const ctx = canvas.getContext('2d'); if (!ctx) return null;
-    ctx.drawImage(img, box.x * pr, box.y * pr, cw, ch, 0, 0, cw, ch);
-    return canvas.toDataURL('image/png');
-  } catch { return null; }
-}
-// Pixel ratio that keeps a capture within a width/height budget (prevents giant canvases /
-// multi-MB payloads that can OOM the dev server when many screens are saved at once).
-function cappedRatio(maxW: number, maxH: number, hardCap: number): number {
-  const w = document.documentElement.scrollWidth || window.innerWidth || 1280;
-  const h = document.documentElement.scrollHeight || window.innerHeight || 1000;
-  return Math.max(0.1, Math.min(window.devicePixelRatio || 1, hardCap, maxW / w, maxH / h));
-}
-// Per-screen record shot: small, JPEG-encoded (one per screen → keep the payload tiny).
-async function recordShot(): Promise<string | null> {
-  try {
-    const mod: any = await import('html-to-image').catch(() => null);
-    if (!mod || !mod.toPng) return null;
-    const pr = cappedRatio(1400, 3000, 1);
-    const dataUrl: string = await mod.toPng(document.documentElement, { pixelRatio: pr, cacheBust: true, filter: nitpickFilter });
-    const img = await loadImg(dataUrl);
-    const c = document.createElement('canvas'); c.width = img.width; c.height = img.height;
-    const ctx = c.getContext('2d'); if (!ctx) return dataUrl;
-    ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, c.width, c.height); ctx.drawImage(img, 0, 0); // white bg for JPEG
-    return c.toDataURL('image/jpeg', 0.6);
-  } catch { return null; }
-}
+// Bake the snip-editor drawings into the cropped image (image-local coords, scale 1).
 async function flattenSnip(url: string, shapes: Shape[]): Promise<string> {
   try {
     const img = await loadImg(url);
@@ -275,14 +254,6 @@ async function flattenSnip(url: string, shapes: Shape[]): Promise<string> {
     return canvas.toDataURL('image/png');
   } catch { return url; }
 }
-
-// ----------------------------------------------------------------- session storage
-
-// Recording lives in component memory for the page-view (it survives client-side navigation
-// because the component stays mounted) and is streamed to the server draft. We deliberately do
-// NOT persist/resume it across full page reloads — only the draft id is tracked, so an abandoned
-// draft can be discarded. This keeps the overlay completely inert when not actively in use.
-function clearSessionStore() { try { sessionStorage.removeItem(ACT_KEY); sessionStorage.removeItem(REC_KEY); sessionStorage.removeItem(SHOT_KEY); sessionStorage.removeItem(DRAFT_KEY); } catch { /* ignore */ } }
 
 // ----------------------------------------------------------------- component
 
@@ -303,9 +274,8 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
   const [snip, setSnip] = useState<Snip | null>(null); // snip editor open when set
   const [snipShapes, setSnipShapes] = useState<Shape[]>([]); // baked into image, never persisted as coords
   const [snipDraft, setSnipDraft] = useState<Shape | null>(null);
-  const [capturing, setCapturing] = useState(false); // a screenshot is in flight (masks the brief scroll-to-top)
+  const [capturing, setCapturing] = useState(false); // a screenshot is in flight
   const [actions, setActions] = useState<Action[]>([]);
-  const [recordShots, setRecordShots] = useState<ScreenShot[]>([]); // one full-page shot per screen visited while recording
   const [hovered, setHovered] = useState<DOMRect | null>(null);
   const [comment, setComment] = useState('');
   const [referenceImage, setReferenceImage] = useState<string | null>(null);
@@ -318,51 +288,7 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
   const snipStart = useRef<Pt | null>(null);
   const dragOff = useRef<Pt | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const shotTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const prevRec = useRef(false);
-  const draftIdRef = useRef<string | null>(null);
   const lastUrlRef = useRef('');
-  const lastShotAtRef = useRef(0);
-  const shotCountRef = useRef(0);
-
-  const post = (payload: unknown) =>
-    fetch(ENDPOINT, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) });
-
-  const ensureDraft = useCallback(() => {
-    if (!draftIdRef.current) {
-      const idd = `npd_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
-      draftIdRef.current = idd;
-      try { sessionStorage.setItem(DRAFT_KEY, idd); } catch { /* ignore */ }
-    }
-    return draftIdRef.current;
-  }, []);
-
-  // remove an abandoned draft (cancel / starting a new session) from the server
-  const discardDraft = useCallback(() => {
-    const d = draftIdRef.current;
-    draftIdRef.current = null;
-    try { sessionStorage.removeItem(DRAFT_KEY); } catch { /* ignore */ }
-    if (d) post({ op: 'discard', draftId: d }).catch(() => {});
-  }, []);
-
-  // capture one screen and STREAM it to the server draft (browser keeps only a light ref).
-  // Hard caps (min interval + max count) so recording can never storm the dev server.
-  const captureRecordShot = useCallback(async () => {
-    const now = Date.now();
-    if (now - lastShotAtRef.current < 1200 || shotCountRef.current >= 60) return;
-    lastShotAtRef.current = now;
-    const route = location.pathname + location.search;
-    const url = await recordShot();
-    if (!url) return;
-    const draftId = ensureDraft();
-    try { const res = await post({ op: 'stage', draftId, route, image: url }); if (!res.ok) return; } catch { return; }
-    shotCountRef.current += 1;
-    setRecordShots((prev) => [...prev, { route }].slice(-60));
-  }, [ensureDraft]);
-  const scheduleShot = useCallback((delay: number) => {
-    if (shotTimer.current) clearTimeout(shotTimer.current);
-    shotTimer.current = setTimeout(() => { void captureRecordShot(); }, delay);
-  }, [captureRecordShot]);
 
   const showToast = useCallback((m: string) => {
     setToast(m);
@@ -373,38 +299,22 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
   const close = useCallback(() => {
     setActive(false); setRecording(false); setTool(null); setDrawOpen(false);
     setShapes([]); setDraft(null); setTargets([]); setSnip(null); setSnipShapes([]); setSnipDraft(null);
-    setCapturing(false);
-    setActions([]); setRecordShots([]); setHovered(null); setComment(''); setReferenceImage(null); setSubmitting(false);
+    setCapturing(false); setActions([]); setHovered(null); setComment(''); setReferenceImage(null); setSubmitting(false);
     drawStart.current = null; snipStart.current = null;
-    shotCountRef.current = 0; lastShotAtRef.current = 0;
-    if (shotTimer.current) clearTimeout(shotTimer.current);
-    discardDraft(); // remove any streamed-but-unsubmitted shots
-    clearSessionStore();
-  }, [discardDraft]);
+  }, []);
 
   const openTools = useCallback(() => {
-    // starting a NEW session: drop any draft left over from a cancelled/unsubmitted one
-    try { const leftover = sessionStorage.getItem(DRAFT_KEY); if (leftover) post({ op: 'discard', draftId: leftover }).catch(() => {}); } catch { /* ignore */ }
-    draftIdRef.current = null;
-    clearSessionStore();
     setActive(true); setRecording(false); setTool(null); setDrawOpen(false); setSubmitting(false);
-    setActions([]); setRecordShots([]);
+    setActions([]); setShapes([]); setDraft(null); setTargets([]); setSnip(null); setSnipShapes([]);
     if (typeof window !== 'undefined') { setScroll({ x: window.scrollX, y: window.scrollY }); setPos({ x: Math.max(8, (window.innerWidth - 520) / 2), y: 14 }); }
   }, []);
 
-  // mount — start clean. We do NOT silently auto-resume a recording across page loads (that
-  // could keep capturing in the background and grow the dev-server heap). A fresh page load
-  // abandons any prior session: discard its server draft and clear local keys. (Recording still
-  // works across client-side navigation, since the component stays mounted then.)
+  // mount — start clean. The overlay holds nothing across page loads; it is completely inert
+  // unless you actively use it.
   useEffect(() => {
     setMounted(true);
     // eslint-disable-next-line no-console
     console.info(`[Nitpick] ready — ${hotkeyLabel(hotkey)} / double-tap Shift / click the badge.`);
-    try {
-      const leftover = sessionStorage.getItem(DRAFT_KEY);
-      if (leftover) post({ op: 'discard', draftId: leftover }).catch(() => {});
-    } catch { /* ignore */ }
-    clearSessionStore();
   }, [hotkey]);
 
   // activation
@@ -462,17 +372,16 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
     };
   }, [active, recording, snip, tool]);
 
-  // Record — overlay hidden; capture clicks / inputs (text, select, radio, checkbox) / submit / navigation
+  // Record — overlay hidden; capture clicks / inputs (text, select, radio, checkbox) / submit /
+  // navigation as an ACTION FLOW (no screenshots). Survives client-side navigation (the component
+  // stays mounted), so a flow can span multiple screens.
   useEffect(() => {
     if (!active || !recording) return;
-    shotCountRef.current = 0; lastShotAtRef.current = 0; // reset safety caps for this recording
     const onUi = (t: EventTarget | null) => t instanceof Element && !!t.closest('[data-nitpick-ui]');
     const record = (a: Omit<Action, 'at' | 'url'>) =>
       setActions((prev) => [...prev, { ...a, at: new Date().toISOString(), url: location.pathname + location.search }]);
-    ensureDraft(); // so the streamed shots have a draft to land in (and can be discarded)
     lastUrlRef.current = location.pathname + location.search;
     record({ type: 'navigate' });
-    scheduleShot(450); // snapshot this screen once it settles
     const onClick = (e: MouseEvent) => {
       if (onUi(e.target) || !(e.target instanceof Element)) return;
       const el = interactiveAncestor(e.target);
@@ -498,7 +407,6 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
         if (url === lastUrlRef.current) return;
         lastUrlRef.current = url;
         record({ type: 'navigate' });
-        scheduleShot(750); // new screen needs a moment to render
       }, 0);
     };
     document.addEventListener('click', onClick, true);
@@ -513,15 +421,7 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
       document.removeEventListener('submit', onSubmit, true); window.removeEventListener('popstate', onNav);
       history.pushState = origPush; history.replaceState = origReplace;
     };
-  }, [active, recording, scheduleShot, ensureDraft]);
-
-  // snapshot the final screen when recording stops, then reconcile state with the persisted
-  // store so the toolbox shows everything captured across all screens before the user submits.
-  useEffect(() => {
-    if (prevRec.current && !recording && active) void captureRecordShot(); // snapshot the final screen
-    prevRec.current = recording;
-  }, [recording, active, captureRecordShot]);
-
+  }, [active, recording]);
 
   useEffect(() => {
     if (!active || recording) return;
@@ -557,12 +457,12 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
       if (d.type === 'rect' && d.w > 6 && d.h > 6) {
         const box = { x: d.x, y: d.y, w: d.w, h: d.h };
         setCapturing(true);
-        const url = await withTimeout(cropRegion(box), 8000, null);
+        const cap = await withTimeout(captureRegion(box), 8000, null);
         setCapturing(false);
-        if (url) {
-          const img = await loadImg(url);
+        if (cap) {
+          const img = await loadImg(cap.url);
           const scale = Math.min(Math.min(window.innerWidth * 0.8, 900) / img.width, (window.innerHeight * 0.65) / img.height, 1);
-          setSnip({ url, w: img.width, h: img.height, scale, box }); setSnipShapes([]); setTool('arrow'); setDrawOpen(true);
+          setSnip({ url: cap.url, w: img.width, h: img.height, scale, box }); setSnipShapes([]); setTool('arrow'); setDrawOpen(true);
         } else showToast('Snip failed (html-to-image)');
       }
     } else {
@@ -604,14 +504,11 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
       const isSnip = !!snip;
       const hasDrawing = !!draft || shapes.length > 0;
       const liveActions = actions;
-      const liveShots = recordShots;
-      const draftId = draftIdRef.current; // recording screens are already on the server draft
-      const isRecording = !isSnip && (liveShots.length > 0 || liveActions.length > 0 || !!draftId);
+      const isRecording = !isSnip && !hasDrawing && liveActions.length > 0;
       let screenshot: string | null = null;
       if (isSnip && snip) screenshot = await withTimeout(flattenSnip(snip.url, snipShapes), 8000, snip.url);
-      else if (hasDrawing) { const all = draft ? [...shapes, draft] : shapes; screenshot = await withTimeout(captureFull(all), 8000, null); }
-      else if (!(isRecording && liveShots.length)) screenshot = await withTimeout(captureFull([]), 8000, null);
-      // (recording: per-screen images live in the server draft → single screenshot skipped)
+      else if (!isRecording) { const all = draft ? [...shapes, draft] : shapes; screenshot = await withTimeout(captureDrawing(all), 8000, null); }
+      // recording → action flow only, no screenshot
       const reportTargets = isSnip ? [] : targets; // snip is image-only; Inspect supplies element targets
       const payload = {
         comment,
@@ -624,17 +521,14 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
         targets: reportTargets,
         element: reportTargets[0] ?? null,
         actions: liveActions,
-        draftId, // server promotes the streamed shots into this report's screens[]
         screenshot, referenceImage,
       };
       const res = await fetch(ENDPOINT, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) });
       const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        draftIdRef.current = null; try { sessionStorage.removeItem(DRAFT_KEY); } catch { /* ignore */ } // server consumed the draft
-        showToast(`📍 Saved feedback #${data.id ?? ''}`); close();
-      } else showToast(`Save failed (${res.status})`);
+      if (res.ok) { showToast(`📍 Saved feedback #${data.id ?? ''}`); close(); }
+      else showToast(`Save failed (${res.status})`);
     } catch { showToast('Save failed — is the dev server running?'); } finally { setSubmitting(false); setCapturing(false); }
-  }, [submitting, snip, snipShapes, shapes, draft, comment, targets, actions, recordShots, referenceImage, close, showToast]);
+  }, [submitting, snip, snipShapes, shapes, draft, comment, targets, actions, referenceImage, close, showToast]);
 
   if (!mounted) return null;
 
@@ -662,7 +556,7 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
       {active && recording && (
         <div data-nitpick-ui style={{ position: 'fixed', bottom: 16, left: '50%', transform: 'translateX(-50%)', display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderRadius: 999, background: 'rgba(20,20,22,0.95)', color: '#fff', boxShadow: '0 4px 20px rgba(0,0,0,0.45)', pointerEvents: 'auto', fontSize: 12 }}>
           <span style={{ width: 9, height: 9, borderRadius: '50%', background: ACCENT, boxShadow: '0 0 0 3px rgba(255,45,85,0.3)' }} />
-          Recording · {actions.length} action{actions.length === 1 ? '' : 's'} · {recordShots.length} screen{recordShots.length === 1 ? '' : 's'}
+          Recording · {actions.length} action{actions.length === 1 ? '' : 's'}
           <button onClick={() => setRecording(false)} style={{ ...toolBtn(false), padding: '4px 10px' }}>■ Stop</button>
         </div>
       )}
@@ -732,7 +626,7 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
               <button onClick={() => pickTool('inspect')} style={toolBtn(tool === 'inspect')}>⌖ Inspect</button>
               <button onClick={() => { setDrawOpen((o) => !o || !isDrawTool(tool)); if (!isDrawTool(tool)) setTool('arrow'); }} style={toolBtn(isDrawTool(tool))}>✎ Draw ▾</button>
               <button onClick={() => pickTool('snip')} style={toolBtn(tool === 'snip')}>✂ Snip</button>
-              <button onClick={() => setRecording(true)} title="Record clicks / inputs / navigation across screens" style={toolBtn(false)}>● Record</button>
+              <button onClick={() => setRecording(true)} title="Record clicks / inputs / navigation across screens (action flow only)" style={toolBtn(false)}>● Record</button>
               <button onClick={undo} title="Undo" style={{ ...toolBtn(false), marginLeft: 'auto' }}>↩</button>
               <button onClick={close} title="Close (Esc)" style={toolBtn(false)}>✕</button>
             </div>
@@ -767,24 +661,24 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
                 </button>
               </div>
             </div>
-            {(actions.length > 0 || recordShots.length > 0) ? (
+            {actions.length > 0 ? (
               <div style={{ padding: '6px 10px 9px', fontSize: 11, color: '#fff', display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span>🎬</span>
-                <span><b>{actions.length}</b> action{actions.length === 1 ? '' : 's'} · <b>{recordShots.length}</b> screen{recordShots.length === 1 ? '' : 's'} captured</span>
+                <span><b>{actions.length}</b> action{actions.length === 1 ? '' : 's'} recorded</span>
                 <span style={{ marginLeft: 'auto', opacity: 0.6 }}>add a comment, then Save</span>
               </div>
             ) : (
               <div style={{ padding: '0 10px 8px', fontSize: 10, opacity: 0.6 }}>
-                {snip ? 'snip image' : `${targets.length} element${targets.length === 1 ? '' : 's'} · ${shapes.length} drawing${shapes.length === 1 ? '' : 's'} · full-page shot`}
+                {snip ? 'snip image' : `${targets.length} element${targets.length === 1 ? '' : 's'} · ${shapes.length} drawing${shapes.length === 1 ? '' : 's'} · viewport shot`}
               </div>
             )}
           </div>
         </>
       )}
 
-      {/* masks the momentary scroll-to-top during a screenshot; excluded from the capture itself */}
+      {/* shown while a screenshot is being produced (excluded from the capture itself) */}
       {capturing && (
-        <div data-nitpick-ui style={{ position: 'fixed', inset: 0, zIndex: Z + 10, background: 'rgba(10,10,14,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'auto', color: '#fff', fontSize: 13, fontWeight: 600, letterSpacing: 0.3 }}>
+        <div data-nitpick-ui style={{ position: 'fixed', inset: 0, zIndex: Z + 10, background: 'rgba(10,10,14,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'auto', color: '#fff', fontSize: 13, fontWeight: 600, letterSpacing: 0.3 }}>
           📸 Capturing…
         </div>
       )}

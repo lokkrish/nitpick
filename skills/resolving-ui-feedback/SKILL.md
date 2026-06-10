@@ -33,9 +33,9 @@ correct code fix. (For how reports are produced and the full data contract, see 
 2. **For each open item** (`.nitpick/<id>.json`):
    a. **See it.** Read `<id>.png` — the accent-colored marks point at the exact problem area.
       Read `<id>-ref.png` if present — that's the user's target look. If the item is a
-      **recording** (`captureType: "recording"`), there's no single `<id>.png`; instead read
-      every `screens[].file` (`<id>-1.png`, `<id>-2.png`, …) in order — one per screen the user
-      visited — and pair them with `actions` to follow the flow across pages.
+      **recording** (`captureType: "recording"`), there is **no screenshot** — it's an action
+      flow: read `actions` (clicks / inputs / navigations, in order, each with a route + a
+      Playwright-style locator) and reproduce the steps to reach the bug.
    b. **Locate the code.** A report may reference several elements (`targets[]`) or none
       (a free-form visual/region note). For each entry in `targets` (fall back to `element` =
       `targets[0]` on older reports):
@@ -44,15 +44,17 @@ correct code fix. (For how reports are produced and the full data contract, see 
         `getByRole('button', { name: "Upgrade" })`), `componentName`/`componentStack` (grep the
         component), then `locators.testId`, `locators.css`, `locators.xpath`, `text`, `classes`.
       - **No `targets`?** It's a free-form report — locate the area from the `route`, the
-        annotated `screenshot`, the `region`, and the `comment`.
+        annotated `screenshot`, and the `comment`.
    c. **Diagnose.** Combine `comment` + the annotated `screenshot` + reference image with the
       live facts: `target.computedStyles` (current values), `target.boundingBox`, and `viewport`
       (`viewport.width` ≈ 390/430 → a mobile complaint; fix responsively, never hardcode px for
       one width). Annotations are free-form shapes (arrow/rect/ellipse/pen) in **page-pixel
       coords** and are already baked into the screenshot — trust the picture for *where*, the
-      comment for *what*. If `actions` is present, it's a **recorded repro flow** (clicks /
-      inputs / navigations, in order, across screens, each with a Playwright-style locator) —
-      use it to reproduce the bug and understand the steps that lead to it.
+      comment for *what*. The `screenshot` for a Draw/Snip report is the **viewport the user was
+      looking at** (or the snipped region) with the marks baked in — not the whole page. If
+      `actions` is present, it's a **recorded repro flow** (clicks / inputs / navigations, in
+      order, across screens, each with a Playwright-style locator) — use it to reproduce the bug
+      and understand the steps that lead to it.
    d. **Fix at the source.** Edit the real component. Match the project's styling system
       (Tailwind / CSS modules / styled-components / inline — infer from the file and neighbors).
       Keep edits minimal and idiomatic; don't refactor unrelated code.

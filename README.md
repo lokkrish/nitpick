@@ -53,7 +53,8 @@ Playwright-style locators, and a screenshot. Reporting and fixing stay cleanly s
 - 🎨 **Draw anywhere** — Arrow / Circle / Box / Pen over the whole page, element or not.
 - ✂️ **Snip** — crop a region, mark it up, save it as a flat annotated image.
 - 🎬 **Record a flow** — capture clicks, field inputs (text / dropdown / radio / checkbox), and
-  **navigation across multiple screens** — a repro script with one screenshot per screen.
+  **navigation across multiple screens** as an ordered repro script (each step with its route and
+  a Playwright-style locator).
 - 🧰 **Draggable toolbox**, configurable hotkey (or double-tap Shift, or a click).
 - 🤝 **BMAD-METHOD aware** — route feedback to the dev agent now, or into stories after an epic.
 - 🔒 **Dev-only & report-only** — never runs in production, never changes your app's behavior;
@@ -108,8 +109,9 @@ Nitpick is **two artifacts joined by a file bridge** (full writeup in [`DESIGN.m
 | **Bridge** (dev API route) | your Next.js dev server | writes reports to `.nitpick/*.json` + images |
 | **Plugin** (this repo) | Claude Code | `/nitpick:*` commands + skill + BMAD agent that fix the queue |
 
-Record shots are **streamed to the server as you capture** (flat memory), screenshots are
-size-capped, and the overlay is **completely inert when idle**.
+Screenshots capture **exactly the region you're looking at** (correct at any scroll position),
+Record saves the **action flow only** (no images), and the overlay is **completely inert when
+idle** — no background work, no memory growth.
 
 ## 🎛 Command reference
 

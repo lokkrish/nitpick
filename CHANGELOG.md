@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.3.2
+
+Capture rewrite — the screenshots actually work now, at any scroll position.
+
+- **Root cause fixed: captures only ever showed the top of the page.** `html-to-image` renders
+  `document.documentElement` from the top-left and sizes the output to one viewport height, so a
+  plain full-page capture never included anything below the fold — which is why Snip/Draw made
+  after scrolling came out misaligned, cropped, or blank (the v0.3.1 scroll-to-top attempt made
+  Draw worse, since it then composited your below-the-fold marks onto a top-of-page image).
+- **New `captureRegion(box)` primitive.** We give `html-to-image` an explicit frame the size of
+  the region and translate the cloned document by the region's origin, so **exactly that page
+  region is captured, correct at any scroll** — and always within the browser's max-canvas size.
+  - **Draw** now captures the **viewport you're looking at** and bakes the marks in where you
+    drew them.
+  - **Snip** now captures the **entire region you dragged** (even across an element edge), at
+    full resolution, then you mark it up.
+- **Record no longer captures screenshots — it saves the action flow only.** The per-screen
+  shots only ever grabbed the top of each page, bloated reports, and pressured memory. A recording
+  now saves just the ordered `actions` (clicks / inputs / navigations, each with route + locator).
+  This also removed the whole server-side draft/streaming path (`stage`/`discard` ops, `.draft/`,
+  `screens[]`).
+- Removed `screens`/`region` from the report contract; the API route is back to a single simple
+  save. The fix skill (`resolving-ui-feedback`) updated: recordings are read as an action flow,
+  and the Draw/Snip screenshot is documented as the viewport/region (not the whole page).
+
 ## 0.3.1
 
 - **Fix: Snip / Draw captured a misaligned or blank image after scrolling down a long page.**

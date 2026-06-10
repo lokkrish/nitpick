@@ -78,8 +78,7 @@ This is the interface between browser and agent — keep it stable.
   "comment": "Padding too tight; button overflows on mobile",
   "route": "/dashboard",
   "viewport": { "width": 390, "height": 844, "dpr": 2, "scrollX": 0, "scrollY": 120 },
-  "captureType": "full" | "region",       // screenshot scope chosen in the toolbox
-  "region": { "x": 12, "y": 200, "w": 360, "h": 180 } | null, // PAGE coords, when region
+  "captureType": "full" | "snip" | "recording", // how the report was made
   "coordSpace": "page",                   // annotations & boxes are PAGE coords (incl. scroll)
   // `targets` = every element the user Inspected (0..n). `element` = targets[0] (back-compat).
   "targets": [
@@ -108,18 +107,14 @@ This is the interface between browser and agent — keep it stable.
     { "type": "rect", "x": 20, "y": 40, "w": 300, "h": 120 },
     { "type": "pen", "pts": [[10,20],[15,25]] }
   ],
-  // recorded interaction flow (Record tool) — spans screens, in order
+  // recorded interaction flow (Record tool) — spans screens, in order; ACTIONS ONLY (no images)
   "actions": [
     { "type": "navigate", "at": "...", "url": "/" },
     { "type": "click", "at": "...", "url": "/", "locator": { "getBy": "getByRole('link', { name: \"About\" })" }, "text": "About" },
     { "type": "navigate", "at": "...", "url": "/about" },
     { "type": "input", "at": "...", "url": "/about", "locator": { "getBy": "getByRole('textbox', { name: \"Email\" })" }, "value": "a@b.com" }
   ],
-  "screens": [                            // recording: one full-page shot per screen visited, in order
-    { "route": "/", "file": "001-1.png" },
-    { "route": "/about", "file": "001-2.png" }
-  ],
-  "screenshot": "001.png",                // single-shot reports (draw/snip/full); null for recording
+  "screenshot": "001.png",                // draw/snip/full reports; null for recording (actions only)
   "referenceImage": "001-ref.png"         // optional, user-supplied
 }
 ```
@@ -132,26 +127,18 @@ many elements; a report with `targets: []` is a pure visual/region note. `elemen
 `targets[0]` alias for backward compatibility.
 
 **Actions recorder (v2.1):** the **Record** tool hides the overlay and logs the user's
-clicks / inputs / submits / navigations in the background, persisted in `sessionStorage` so the
-sequence **survives client-side and full-page navigations** (the overlay rehydrates the session
-on mount). Each action carries the URL + Playwright-style locator, so `actions` reads like a
-repro script the dev (or BMAD dev agent) can replay. Password inputs are redacted to `***`.
+clicks / inputs / submits / navigations in the background. Each action carries the URL +
+Playwright-style locator, so `actions` reads like a repro script the dev (or BMAD dev agent) can
+replay. Password inputs are redacted to `***`. Recording lives in component memory and **survives
+client-side navigation** (the overlay stays mounted), so a flow can span multiple screens; it is
+not resumed across full page reloads. The overlay is completely inert unless you actively use it.
 
-**Streaming record shots (v2.7):** to keep memory flat, record screenshots are **streamed to the
-dev server as they're captured** rather than held in the browser and POSTed together. The route
-gains two ops: `stage` (write one shot to `.nitpick/.draft/<draftId>/` with a `meta.json` of
-`{file, route}`) and `discard` (delete a draft). The browser keeps only light refs + the
-`draftId`. On **save**, the client sends just the `draftId`; the server promotes the staged
-shots into `NNN-1.png`, `NNN-2.png`, … and deletes the draft. Cancelling/closing a session — or
-starting a new Nitpick — fires `discard`, so unsubmitted captures never linger. Captures are
-size-budgeted (downscaled + JPEG) and hard-capped (min interval + max count) as guards against OOM.
-
-**No silent auto-resume (v2.9).** Recording lives in component memory for the page-view — it
-survives **client-side** navigation (the overlay stays mounted) but is intentionally **not**
-resumed across **full page reloads**. Earlier the session was restored from `sessionStorage` on
-every mount, which could silently restart background recording after a crash and grow the dev
-server heap. Now a fresh page load **abandons** any prior session (discards its server draft,
-clears keys), so the overlay is completely inert unless you actively use it.
+**Record is action-flow only (v0.3.2).** Earlier versions also captured a screenshot per screen
+visited (`screens[]`, streamed to a server-side `.draft/`). That whole path is **gone**: the
+per-screen shots only ever captured the top of the page (an `html-to-image` limitation, see
+below), bloated reports, and were a memory-pressure source. A recording now saves just the
+ordered `actions` — which already pinpoint *what* the user did and *where* (route + locator).
+Use **Snip** or **Draw** when a picture is needed.
 
 **Snip (v2.2):** **Snip** crops a region and lets the user draw on the cropped image; those
 drawings are **baked into the image** (no coordinates stored) and saved as the screenshot. A snip
@@ -172,25 +159,38 @@ Triggered by `/nitpick:process` or when the user mentions processing UI feedback
    one-line note of what changed.
 4. Move to the next; summarize at the end.
 
-## Screenshots (v2: full page or region)
+## Screenshots — bounded region capture (v0.3.2)
 
-The toolbox offers **Full** (whole page) and **Area** (drag a region) capture. Both render the
-page once via `html-to-image` on `document.documentElement`, then the canvas is cropped to the
-region (if any) and the vector annotations are composited on top — all in page coordinates, so
-they line up regardless of scroll. Capture is **best-effort**: if `html-to-image` is absent or
-throws, the report still saves with vector annotations + full metadata and stays actionable.
+This is the part that was repeatedly broken, so it's worth stating the root cause plainly.
 
-**Scroll-safe capture (v0.3.1).** `html-to-image` renders `document.documentElement` from the
-page origin, but when the page is scrolled the captured content is shifted by the scroll amount —
-so on a long page, a snip/draw made after scrolling came out misaligned or blank. The shared
-`snapshotDoc(pr)` helper now **scrolls to the top for the capture and restores the exact scroll
-right after** (masked by a brief "📸 Capturing…" overlay), so page coordinates always line up
-with the image. The crop ratio is also budgeted against the **full** page height (`cappedRatio`)
-so the intermediate canvas stays within the browser's max-canvas size on very tall pages.
+`html-to-image` renders `document.documentElement` from the page's top-left and — left to itself
+— sizes the output to the element's **client** height, i.e. **one viewport tall**. So a naive
+`toPng(document.documentElement)` only ever captures the **top** of the page. Compositing
+below-the-fold annotations onto that image put them off-canvas (the "screenshot shows the top,
+no marks" bug); cropping a snip at page coordinates from it failed for the same reason.
+
+The fix is a single primitive, `captureRegion(box)` (`box` in **page coordinates**):
+
+- give `html-to-image` an **explicit frame** the exact size of the region (`width`/`height`), and
+- apply `style: { transform: translate(-box.x, -box.y) }` to the cloned document,
+
+so exactly `[x, y, w, h]` of the page is rendered into the frame — **correct at any scroll
+position**, and always within the browser's max-canvas size because the frame is a region, never
+the whole long page. Everything builds on it:
+
+- **Draw** → `captureRegion(viewport)` (the view pane you're looking at), then the vector marks
+  are composited in (page coords − scroll origin) so they land exactly where you drew them.
+- **Snip** → `captureRegion(snipBox)` renders precisely the dragged region — the full snipped
+  area, even if it straddles an element edge — which you then mark up; those marks are baked into
+  the image (no coordinates stored).
+
+Capture is **best-effort**: if `html-to-image` is absent or throws, the report still saves with
+its comment + metadata (and, for Inspect, full element targets) and stays actionable. A brief
+"📸 Capturing…" overlay (excluded from the capture) shows while a shot is produced.
 
 A native HD path (`navigator.mediaDevices.getDisplayMedia`) would give pixel-perfect captures
 (and fix `html-to-image`'s blank-`next/image` quirk) at the cost of a per-use permission prompt
-— tracked as a v2.1 toggle, not the default.
+— tracked as a future toggle, not the default.
 
 ## Safety / scope rules
 
