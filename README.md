@@ -64,16 +64,17 @@ Nothing Nitpick adds runs in production — the overlay and the route both hard-
 1. Run your app: `npm run dev`.
 2. Activate: **`Ctrl+Shift+. (period)`**, double-tap **Shift**, or click the badge. A draggable
    **toolbox** appears (drag the ⠿ handle to move it).
-3. Pick a tool:
+3. Pick a tool (nothing is selected by default):
    - **⌖ Inspect** — hover to highlight, click to capture an element (you can capture several).
      Each grabs the component, source line, computed styles, and Playwright-style locators
      (role + name, `getByRole`/`getByTestId`, CSS, XPath).
-   - **↗ Arrow · ✎ Draw · ▭ Box** — annotate **anywhere** on the page, element or not.
-   - **⬚ Area** — drag a region; it snips that section and saves just that crop (otherwise the
-     capture is the **🖼 full page**).
-   - **● Record** — hides the overlay and logs your clicks / inputs / **navigation** in the
-     background as a repro flow; it **persists across screens** (even full page reloads). Hit
-     **Stop** when done.
+   - **✎ Draw** — group of **Arrow / Circle / Box / Pen**; annotate **anywhere** on the page,
+     element or not (saved as vector annotations on a full-page screenshot).
+   - **✂ Snip** — drag a region, then draw **on the cropped image**; Save stores just that
+     flattened image + comment (snip drawings are baked in — no coordinates kept).
+   - **● Record** — hides the overlay and logs your clicks / field inputs (text, dropdowns,
+     radios/checkboxes) / **navigation** in the background as a repro flow; it **persists across
+     screens** (even full page reloads). Hit **Stop** when done.
 4. Type a comment, optionally `Ctrl+V` / drop a reference image, then **Save** (or `Esc` to cancel).
 5. Repeat for as many issues as you want — they queue up in `.nitpick/`.
 

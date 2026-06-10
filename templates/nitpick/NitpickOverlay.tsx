@@ -1,17 +1,20 @@
 'use client';
 
 /**
- * Nitpick — in-app visual feedback overlay (dev-only). v2.1.
+ * Nitpick — in-app visual feedback overlay (dev-only). v2.2.
  *
- * Activate (Ctrl+Shift+. / double-tap Shift / click the badge) → a draggable toolbox appears.
- * Tools: Inspect (capture element + Playwright-style locators; stays active for multi-select),
- * Arrow, Pen, Rectangle (draw anywhere — no element required), Area (snip a region), and
- * Record (hide the overlay and log clicks/inputs/navigation in the background, persisted across
- * screens). Add a comment / reference image, then Save → POST to /api/nitpick → `.nitpick/`.
+ * Activate (Ctrl+Shift+. / double-tap Shift / click the badge) → a draggable toolbox appears
+ * with NOTHING selected. Tools:
+ *   • Inspect  — capture element(s) + Playwright-style locators (stays active for multi-select)
+ *   • Draw     — Arrow / Circle / Box / Pen, drawn anywhere on the page (vector annotations)
+ *   • Snip     — drag a region, mark it up on the cropped image; saved as a flat image + comment
+ *                (drawings are baked into the image — no coordinates are stored)
+ *   • Record   — hide the overlay and log clicks / inputs / dropdowns / radios / navigation in
+ *                the background, persisted across screens (incl. full reloads)
+ * Add a comment / reference image, then Save → POST to /api/nitpick → `.nitpick/`.
  *
  * Self-contained: only React + ./nitpick-source. Screenshots are best-effort via an optional
  * dynamic import of `html-to-image` (with a timeout so Save never hangs).
- *
  * Report-only: nothing here mutates the host app; in production the component renders null.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -24,11 +27,10 @@ const ENDPOINT = '/api/nitpick';
 const REC_KEY = '__nitpick_rec';
 const ACT_KEY = '__nitpick_actions';
 
-// ----------------------------------------------------------------- hotkey (config + matching)
+// ----------------------------------------------------------------- hotkey
 
 export interface Hotkey { ctrl?: boolean; meta?: boolean; alt?: boolean; shift?: boolean; code: string }
 const DEFAULT_HOTKEY: Hotkey = { ctrl: true, shift: true, code: 'Period' };
-
 function matchHotkey(e: KeyboardEvent, h: Hotkey): boolean {
   return e.code === h.code && e.ctrlKey === !!h.ctrl && e.metaKey === !!h.meta && e.altKey === !!h.alt && e.shiftKey === !!h.shift;
 }
@@ -46,34 +48,32 @@ function hotkeyLabel(h: Hotkey): string {
   return parts.join('+');
 }
 
-// --------------------------------------------------------------------------------- types
+// ----------------------------------------------------------------- types
 
-type DrawTool = 'arrow' | 'pen' | 'rect';
-type Tool = 'inspect' | DrawTool | 'region';
+type DrawTool = 'arrow' | 'circle' | 'box' | 'pen';
+type Tool = null | 'inspect' | DrawTool | 'snip';
 
 type Shape =
   | { type: 'arrow'; x1: number; y1: number; x2: number; y2: number }
   | { type: 'pen'; pts: [number, number][] }
   | { type: 'rect'; x: number; y: number; w: number; h: number }
-  | { type: 'ellipse'; cx: number; cy: number; rx: number; ry: number }; // legacy render support
+  | { type: 'ellipse'; cx: number; cy: number; rx: number; ry: number };
 
 interface Box { x: number; y: number; w: number; h: number }
+interface Snip { url: string; w: number; h: number; scale: number }
+interface Pt { x: number; y: number }
 
-interface Locators {
-  role: string | null; name: string; testId: { attr: string; value: string } | null;
-  getBy: string | null; css: string; xpath: string; outerTag: string;
-}
+interface Locators { role: string | null; name: string; testId: { attr: string; value: string } | null; getBy: string | null; css: string; xpath: string; outerTag: string }
 interface Target {
   source: ElementInfo['source']; componentName: string | null; componentStack: string[];
   tag: string; id: string; classes: string[]; text: string; dataAttributes: Record<string, string>;
   locators: Locators; boundingBox: Box; computedStyles: Record<string, string>;
 }
-interface Action {
-  type: 'click' | 'input' | 'submit' | 'navigate';
-  at: string; url: string; locator?: Locators; tag?: string; text?: string; value?: string;
-}
+interface Action { type: 'click' | 'input' | 'submit' | 'navigate'; at: string; url: string; locator?: Locators; tag?: string; text?: string; value?: string }
 
-// --------------------------------------------------------------------------------- DOM helpers
+const isDrawTool = (t: Tool): t is DrawTool => t === 'arrow' || t === 'circle' || t === 'box' || t === 'pen';
+
+// ----------------------------------------------------------------- DOM helpers
 
 const STYLE_KEYS = [
   'display', 'position', 'width', 'height', 'marginTop', 'marginRight', 'marginBottom', 'marginLeft',
@@ -84,50 +84,39 @@ const STYLE_KEYS = [
 ];
 const kebab = (s: string) => s.replace(/[A-Z]/g, (m) => '-' + m.toLowerCase());
 function getStyleSubset(el: Element): Record<string, string> {
-  const cs = getComputedStyle(el);
-  const out: Record<string, string> = {};
+  const cs = getComputedStyle(el); const out: Record<string, string> = {};
   for (const k of STYLE_KEYS) { const v = cs.getPropertyValue(kebab(k)); if (v && v.trim() !== '') out[k] = v.trim(); }
   return out;
 }
 function buildSelector(el: Element): string {
   if (el.id) return `#${CSS.escape(el.id)}`;
-  const parts: string[] = [];
-  let node: Element | null = el;
+  const parts: string[] = []; let node: Element | null = el;
   while (node && node.nodeType === 1 && node !== document.body && parts.length < 6) {
     if (node.id) { parts.unshift(`#${CSS.escape(node.id)}`); break; }
-    let part = node.tagName.toLowerCase();
-    const parent: Element | null = node.parentElement;
-    if (parent) {
-      const sameTag = Array.from(parent.children).filter((c) => c.tagName === node!.tagName);
-      if (sameTag.length > 1) part += `:nth-of-type(${sameTag.indexOf(node) + 1})`;
-    }
-    parts.unshift(part);
-    node = node.parentElement;
+    let part = node.tagName.toLowerCase(); const parent: Element | null = node.parentElement;
+    if (parent) { const sameTag = Array.from(parent.children).filter((c) => c.tagName === node!.tagName); if (sameTag.length > 1) part += `:nth-of-type(${sameTag.indexOf(node) + 1})`; }
+    parts.unshift(part); node = node.parentElement;
   }
   return parts.join(' > ');
 }
 function xpathOf(el: Element): string {
   if (el.id) return `//*[@id=${JSON.stringify(el.id)}]`;
-  const parts: string[] = [];
-  let node: Element | null = el;
+  const parts: string[] = []; let node: Element | null = el;
   while (node && node.nodeType === 1 && node !== document.body) {
     let i = 1; let sib = node.previousElementSibling;
     while (sib) { if (sib.tagName === node.tagName) i++; sib = sib.previousElementSibling; }
-    parts.unshift(`${node.tagName.toLowerCase()}[${i}]`);
-    node = node.parentElement;
+    parts.unshift(`${node.tagName.toLowerCase()}[${i}]`); node = node.parentElement;
   }
   return '/html/body/' + parts.join('/');
 }
 const INPUT_ROLE: Record<string, string | null> = {
   checkbox: 'checkbox', radio: 'radio', range: 'slider', button: 'button', submit: 'button',
-  reset: 'button', search: 'searchbox', email: 'textbox', tel: 'textbox', url: 'textbox',
-  number: 'spinbutton', text: 'textbox', password: null,
+  reset: 'button', search: 'searchbox', email: 'textbox', tel: 'textbox', url: 'textbox', number: 'spinbutton', text: 'textbox', password: null,
 };
 const TAG_ROLE: Record<string, string> = {
-  button: 'button', nav: 'navigation', main: 'main', header: 'banner', footer: 'contentinfo',
-  aside: 'complementary', h1: 'heading', h2: 'heading', h3: 'heading', h4: 'heading', h5: 'heading',
-  h6: 'heading', ul: 'list', ol: 'list', li: 'listitem', table: 'table', select: 'combobox',
-  textarea: 'textbox', form: 'form', section: 'region', dialog: 'dialog',
+  button: 'button', nav: 'navigation', main: 'main', header: 'banner', footer: 'contentinfo', aside: 'complementary',
+  h1: 'heading', h2: 'heading', h3: 'heading', h4: 'heading', h5: 'heading', h6: 'heading', ul: 'list', ol: 'list',
+  li: 'listitem', table: 'table', select: 'combobox', textarea: 'textbox', form: 'form', section: 'region', dialog: 'dialog',
 };
 function implicitRole(el: Element): string | null {
   const explicit = el.getAttribute('role'); if (explicit) return explicit;
@@ -150,9 +139,7 @@ function accessibleName(el: Element): string {
   return '';
 }
 function testIdOf(el: Element): { attr: string; value: string } | null {
-  for (const a of ['data-testid', 'data-test-id', 'data-test', 'data-cy', 'data-qa']) {
-    const v = el.getAttribute(a); if (v) return { attr: a, value: v };
-  }
+  for (const a of ['data-testid', 'data-test-id', 'data-test', 'data-cy', 'data-qa']) { const v = el.getAttribute(a); if (v) return { attr: a, value: v }; }
   return null;
 }
 function buildLocators(el: Element): Locators {
@@ -165,16 +152,13 @@ function buildLocators(el: Element): Locators {
   return { role, name, testId, getBy, css: buildSelector(el), xpath: xpathOf(el), outerTag };
 }
 function captureTarget(el: Element): Target {
-  const info = resolveElementInfo(el);
-  const r = el.getBoundingClientRect();
-  const dataAttributes: Record<string, string> = {};
-  const ds = (el as HTMLElement).dataset || {};
+  const info = resolveElementInfo(el); const r = el.getBoundingClientRect();
+  const dataAttributes: Record<string, string> = {}; const ds = (el as HTMLElement).dataset || {};
   for (const k of Object.keys(ds)) { if (!k.startsWith('nitpick')) dataAttributes[k] = ds[k] as string; }
   return {
     source: info.source, componentName: info.componentName, componentStack: info.componentStack,
     tag: el.tagName.toLowerCase(), id: (el as HTMLElement).id || '', classes: Array.from(el.classList || []),
-    text: (el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 140), dataAttributes,
-    locators: buildLocators(el),
+    text: (el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 140), dataAttributes, locators: buildLocators(el),
     boundingBox: { x: Math.round(r.left + window.scrollX), y: Math.round(r.top + window.scrollY), w: Math.round(r.width), h: Math.round(r.height) },
     computedStyles: getStyleSubset(el),
   };
@@ -182,8 +166,13 @@ function captureTarget(el: Element): Target {
 function interactiveAncestor(el: Element): Element {
   return el.closest('button, a, [role="button"], [role="link"], [role="tab"], [role="menuitem"], input, select, textarea, summary, label, [onclick]') || el;
 }
+function nonPenShape(tool: Tool, s: Pt, p: Pt): Shape {
+  if (tool === 'arrow') return { type: 'arrow', x1: s.x, y1: s.y, x2: p.x, y2: p.y };
+  if (tool === 'circle') return { type: 'ellipse', cx: (s.x + p.x) / 2, cy: (s.y + p.y) / 2, rx: Math.abs(p.x - s.x) / 2, ry: Math.abs(p.y - s.y) / 2 };
+  return { type: 'rect', x: Math.min(s.x, p.x), y: Math.min(s.y, p.y), w: Math.abs(p.x - s.x), h: Math.abs(p.y - s.y) }; // box / snip marquee
+}
 
-// --------------------------------------------------------------------------------- screenshot
+// ----------------------------------------------------------------- screenshot
 
 function loadImg(src: string): Promise<HTMLImageElement> {
   return new Promise((res, rej) => { const img = new Image(); img.onload = () => res(img); img.onerror = rej; img.src = src; });
@@ -191,8 +180,8 @@ function loadImg(src: string): Promise<HTMLImageElement> {
 function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
   return Promise.race([p, new Promise<T>((res) => setTimeout(() => res(fallback), ms))]);
 }
-function drawShapes(ctx: CanvasRenderingContext2D, shapes: Shape[], dpr: number, ox: number, oy: number) {
-  ctx.strokeStyle = ACCENT; ctx.fillStyle = ACCENT; ctx.lineWidth = Math.max(2, 2.5 * dpr); ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+function drawShapes(ctx: CanvasRenderingContext2D, shapes: Shape[], dpr: number, ox: number, oy: number, lw?: number) {
+  ctx.strokeStyle = ACCENT; ctx.fillStyle = ACCENT; ctx.lineWidth = lw ?? Math.max(2, 2.5 * dpr); ctx.lineJoin = 'round'; ctx.lineCap = 'round';
   const X = (x: number) => (x - ox) * dpr; const Y = (y: number) => (y - oy) * dpr;
   for (const s of shapes) {
     ctx.beginPath();
@@ -209,33 +198,52 @@ function drawShapes(ctx: CanvasRenderingContext2D, shapes: Shape[], dpr: number,
     }
   }
 }
-async function captureScreenshot(shapes: Shape[], region: Box | null): Promise<string | null> {
+async function captureFull(shapes: Shape[]): Promise<string | null> {
   try {
     const mod: any = await import('html-to-image').catch(() => null);
     if (!mod || !mod.toPng) return null;
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const dataUrl: string = await mod.toPng(document.documentElement, {
-      pixelRatio: dpr, cacheBust: true, filter: (n: any) => !(n && n.dataset && n.dataset.nitpickUi),
-    });
+    const dataUrl: string = await mod.toPng(document.documentElement, { pixelRatio: dpr, cacheBust: true, filter: (n: any) => !(n && n.dataset && n.dataset.nitpickUi) });
+    if (!shapes.length) return dataUrl;
     const img = await loadImg(dataUrl);
-    const ox = region ? region.x : 0; const oy = region ? region.y : 0;
-    const cw = Math.max(1, Math.round((region ? region.w : img.width / dpr) * dpr));
-    const ch = Math.max(1, Math.round((region ? region.h : img.height / dpr) * dpr));
-    const canvas = document.createElement('canvas'); canvas.width = cw; canvas.height = ch;
+    const canvas = document.createElement('canvas'); canvas.width = img.width; canvas.height = img.height;
     const ctx = canvas.getContext('2d'); if (!ctx) return dataUrl;
-    ctx.drawImage(img, ox * dpr, oy * dpr, cw, ch, 0, 0, cw, ch);
-    if (shapes.length) drawShapes(ctx, shapes, dpr, ox, oy);
+    ctx.drawImage(img, 0, 0); drawShapes(ctx, shapes, dpr, 0, 0);
     return canvas.toDataURL('image/png');
   } catch { return null; }
 }
+async function cropRegion(box: Box): Promise<string | null> {
+  try {
+    const mod: any = await import('html-to-image').catch(() => null);
+    if (!mod || !mod.toPng) return null;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const dataUrl: string = await mod.toPng(document.documentElement, { pixelRatio: dpr, cacheBust: true, filter: (n: any) => !(n && n.dataset && n.dataset.nitpickUi) });
+    const img = await loadImg(dataUrl);
+    const cw = Math.max(1, Math.round(box.w * dpr)); const ch = Math.max(1, Math.round(box.h * dpr));
+    const canvas = document.createElement('canvas'); canvas.width = cw; canvas.height = ch;
+    const ctx = canvas.getContext('2d'); if (!ctx) return null;
+    ctx.drawImage(img, box.x * dpr, box.y * dpr, cw, ch, 0, 0, cw, ch);
+    return canvas.toDataURL('image/png');
+  } catch { return null; }
+}
+async function flattenSnip(url: string, shapes: Shape[]): Promise<string> {
+  try {
+    const img = await loadImg(url);
+    const canvas = document.createElement('canvas'); canvas.width = img.width; canvas.height = img.height;
+    const ctx = canvas.getContext('2d'); if (!ctx) return url;
+    ctx.drawImage(img, 0, 0);
+    if (shapes.length) drawShapes(ctx, shapes, 1, 0, 0, Math.max(3, Math.round(img.width * 0.004)));
+    return canvas.toDataURL('image/png');
+  } catch { return url; }
+}
 
-// --------------------------------------------------------------------------------- session storage
+// ----------------------------------------------------------------- session storage
 
 function loadActions(): Action[] { try { return JSON.parse(sessionStorage.getItem(ACT_KEY) || '[]'); } catch { return []; } }
 function saveActions(a: Action[]) { try { sessionStorage.setItem(ACT_KEY, JSON.stringify(a)); } catch { /* ignore */ } }
 function clearSessionStore() { try { sessionStorage.removeItem(ACT_KEY); sessionStorage.removeItem(REC_KEY); } catch { /* ignore */ } }
 
-// --------------------------------------------------------------------------------- component
+// ----------------------------------------------------------------- component
 
 export default function NitpickOverlay({ hotkey }: { hotkey?: Hotkey } = {}) {
   if (process.env.NODE_ENV === 'production') return null;
@@ -246,12 +254,14 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
   const [mounted, setMounted] = useState(false);
   const [active, setActive] = useState(false);
   const [recording, setRecording] = useState(false);
-  const [tool, setTool] = useState<Tool>('inspect');
-  const [shapes, setShapes] = useState<Shape[]>([]);
+  const [tool, setTool] = useState<Tool>(null);
+  const [drawOpen, setDrawOpen] = useState(false);
+  const [shapes, setShapes] = useState<Shape[]>([]);   // page annotations (vector, page coords)
   const [draft, setDraft] = useState<Shape | null>(null);
   const [targets, setTargets] = useState<Target[]>([]);
-  const [region, setRegion] = useState<Box | null>(null);
-  const [regionShot, setRegionShot] = useState<string | null>(null);
+  const [snip, setSnip] = useState<Snip | null>(null); // snip editor open when set
+  const [snipShapes, setSnipShapes] = useState<Shape[]>([]); // baked into image, never persisted as coords
+  const [snipDraft, setSnipDraft] = useState<Shape | null>(null);
   const [actions, setActions] = useState<Action[]>([]);
   const [hovered, setHovered] = useState<DOMRect | null>(null);
   const [comment, setComment] = useState('');
@@ -261,8 +271,9 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
   const [scroll, setScroll] = useState({ x: 0, y: 0 });
   const [pos, setPos] = useState({ x: 24, y: 16 });
 
-  const drawStart = useRef<{ x: number; y: number } | null>(null);
-  const dragOff = useRef<{ x: number; y: number } | null>(null);
+  const drawStart = useRef<Pt | null>(null);
+  const snipStart = useRef<Pt | null>(null);
+  const dragOff = useRef<Pt | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const showToast = useCallback((m: string) => {
@@ -272,42 +283,34 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
   }, []);
 
   const close = useCallback(() => {
-    setActive(false); setRecording(false); setTool('inspect');
-    setShapes([]); setDraft(null); setTargets([]); setRegion(null); setRegionShot(null);
+    setActive(false); setRecording(false); setTool(null); setDrawOpen(false);
+    setShapes([]); setDraft(null); setTargets([]); setSnip(null); setSnipShapes([]); setSnipDraft(null);
     setActions([]); setHovered(null); setComment(''); setReferenceImage(null); setSubmitting(false);
-    drawStart.current = null;
+    drawStart.current = null; snipStart.current = null;
     clearSessionStore();
   }, []);
 
   const openTools = useCallback(() => {
-    setActive(true); setRecording(false); setTool('inspect'); setSubmitting(false);
-    if (typeof window !== 'undefined') {
-      setScroll({ x: window.scrollX, y: window.scrollY });
-      setPos({ x: Math.max(8, (window.innerWidth - 520) / 2), y: 14 });
-    }
+    setActive(true); setRecording(false); setTool(null); setDrawOpen(false); setSubmitting(false);
+    if (typeof window !== 'undefined') { setScroll({ x: window.scrollX, y: window.scrollY }); setPos({ x: Math.max(8, (window.innerWidth - 520) / 2), y: 14 }); }
   }, []);
 
-  // mount + restore any in-progress recording session (persists across full page reloads)
+  // mount + restore an in-progress recording session (persists across full reloads)
   useEffect(() => {
     setMounted(true);
     // eslint-disable-next-line no-console
     console.info(`[Nitpick] ready — ${hotkeyLabel(hotkey)} / double-tap Shift / click the badge.`);
-    let resumed = false;
     try {
-      const acts = loadActions();
-      const wasRec = sessionStorage.getItem(REC_KEY) === '1';
+      const acts = loadActions(); const wasRec = sessionStorage.getItem(REC_KEY) === '1';
       if (acts.length || wasRec) {
-        resumed = true;
-        setActions(acts);
-        setActive(true);
-        setRecording(wasRec);
+        setActions(acts); setActive(true); setRecording(wasRec); setTool(null);
         setPos({ x: Math.max(8, (window.innerWidth - 520) / 2), y: 14 });
+        showToast('📍 Nitpick session resumed');
       }
     } catch { /* ignore */ }
-    if (resumed) showToast('📍 Nitpick session resumed');
   }, [hotkey, showToast]);
 
-  // activation (combo, double-tap Shift, Esc)
+  // activation
   useEffect(() => {
     let lastShift = 0;
     const toggle = () => (active ? close() : openTools());
@@ -315,7 +318,8 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
       if (matchHotkey(e, hotkey)) { e.preventDefault(); toggle(); return; }
       if (e.key === 'Escape' && active) {
         e.preventDefault();
-        if (recording) setRecording(false); // stop recording first; keep the session/toolbox
+        if (recording) setRecording(false);
+        else if (snip) { setSnip(null); setSnipShapes([]); setSnipDraft(null); }
         else close();
         return;
       }
@@ -324,79 +328,67 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
     const onKeyUp = (e: KeyboardEvent) => {
       if (e.key !== 'Shift') return;
       const n = Date.now();
-      if (n - lastShift > 40 && n - lastShift < 450) { lastShift = 0; if (!active) openTools(); }
-      else lastShift = n;
+      if (n - lastShift > 40 && n - lastShift < 450) { lastShift = 0; if (!active) openTools(); } else lastShift = n;
     };
     window.addEventListener('keydown', onKeyDown, true);
     window.addEventListener('keyup', onKeyUp, true);
     return () => { window.removeEventListener('keydown', onKeyDown, true); window.removeEventListener('keyup', onKeyUp, true); };
-  }, [active, recording, hotkey, close, openTools]);
+  }, [active, recording, snip, hotkey, close, openTools]);
 
-  // keep annotation layer aligned while scrolling
+  // keep page annotation layer aligned while scrolling
   useEffect(() => {
-    if (!active || recording) return;
+    if (!active || recording || snip) return;
     const onScroll = () => setScroll({ x: window.scrollX, y: window.scrollY });
     window.addEventListener('scroll', onScroll, { passive: true });
     return () => window.removeEventListener('scroll', onScroll);
-  }, [active, recording]);
+  }, [active, recording, snip]);
 
-  // persist actions for cross-screen continuity
   useEffect(() => { if (active) saveActions(actions); }, [actions, active]);
 
-  // Inspect: hover highlight + click to capture element(s). Stays active after each pick.
+  // Inspect — hover highlight + click to capture; excludes Nitpick UI so the comment box works
   useEffect(() => {
-    if (!active || recording || tool !== 'inspect') { setHovered(null); return; }
+    if (!active || recording || snip || tool !== 'inspect') { setHovered(null); return; }
     const onUi = (t: EventTarget | null) => t instanceof Element && !!t.closest('[data-nitpick-ui]');
     const under = (x: number, y: number): Element | null => {
       const el = document.elementFromPoint(x, y);
-      if (!el || onUi(el)) return null;
-      if (el === document.documentElement || el === document.body) return null;
+      if (!el || onUi(el) || el === document.documentElement || el === document.body) return null;
       return el;
     };
     const onMove = (e: MouseEvent) => { if (onUi(e.target)) return; const el = under(e.clientX, e.clientY); setHovered(el ? el.getBoundingClientRect() : null); };
-    const onClick = (e: MouseEvent) => {
-      if (onUi(e.target)) return; // let toolbox clicks (comment box, buttons) work
-      const el = under(e.clientX, e.clientY); if (!el) return;
-      e.preventDefault(); e.stopPropagation();
-      setTargets((t) => [...t, captureTarget(el)]);
-    };
+    const onClick = (e: MouseEvent) => { if (onUi(e.target)) return; const el = under(e.clientX, e.clientY); if (!el) return; e.preventDefault(); e.stopPropagation(); setTargets((t) => [...t, captureTarget(el)]); };
     const block = (e: Event) => { if (onUi(e.target)) return; e.preventDefault(); e.stopPropagation(); };
     window.addEventListener('mousemove', onMove, true);
     window.addEventListener('click', onClick, true);
     window.addEventListener('mousedown', block, true);
     window.addEventListener('mouseup', block, true);
     return () => {
-      window.removeEventListener('mousemove', onMove, true);
-      window.removeEventListener('click', onClick, true);
-      window.removeEventListener('mousedown', block, true);
-      window.removeEventListener('mouseup', block, true);
+      window.removeEventListener('mousemove', onMove, true); window.removeEventListener('click', onClick, true);
+      window.removeEventListener('mousedown', block, true); window.removeEventListener('mouseup', block, true);
     };
-  }, [active, recording, tool]);
+  }, [active, recording, snip, tool]);
 
-  // Recording: overlay hides; capture clicks / inputs / submits / navigation in the background.
+  // Record — overlay hidden; capture clicks / inputs (text, select, radio, checkbox) / submit / navigation
   useEffect(() => {
     if (!active || !recording) return;
     try { sessionStorage.setItem(REC_KEY, '1'); } catch { /* ignore */ }
     const onUi = (t: EventTarget | null) => t instanceof Element && !!t.closest('[data-nitpick-ui]');
     const record = (a: Omit<Action, 'at' | 'url'>) =>
-      setActions((prev) => {
-        const next = [...prev, { ...a, at: new Date().toISOString(), url: location.pathname + location.search }];
-        saveActions(next);
-        return next;
-      });
-    record({ type: 'navigate' }); // anchor the current screen
+      setActions((prev) => { const next = [...prev, { ...a, at: new Date().toISOString(), url: location.pathname + location.search }]; saveActions(next); return next; });
+    record({ type: 'navigate' });
     const onClick = (e: MouseEvent) => {
       if (onUi(e.target) || !(e.target instanceof Element)) return;
       const el = interactiveAncestor(e.target);
       record({ type: 'click', locator: buildLocators(el), tag: el.tagName.toLowerCase(), text: (el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 60) });
     };
     const onChange = (e: Event) => {
-      const t = e.target;
-      if (onUi(t)) return;
-      if (t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || t instanceof HTMLSelectElement) {
-        const pw = t instanceof HTMLInputElement && t.type === 'password';
-        record({ type: 'input', locator: buildLocators(t), value: pw ? '***' : String((t as any).value ?? '').slice(0, 120) });
+      const t = e.target; if (onUi(t)) return;
+      if (t instanceof HTMLSelectElement) { const opt = t.options[t.selectedIndex]; record({ type: 'input', locator: buildLocators(t), value: `select → ${opt ? opt.text.trim() : t.value}` }); return; }
+      if (t instanceof HTMLInputElement) {
+        const ty = t.type;
+        if (ty === 'checkbox' || ty === 'radio') { record({ type: 'input', locator: buildLocators(t), value: `${ty} ${t.checked ? 'checked' : 'unchecked'}${t.value && t.value !== 'on' ? ` (${t.value})` : ''}` }); return; }
+        record({ type: 'input', locator: buildLocators(t), value: ty === 'password' ? '***' : String(t.value).slice(0, 120) }); return;
       }
+      if (t instanceof HTMLTextAreaElement) { record({ type: 'input', locator: buildLocators(t), value: String(t.value).slice(0, 120) }); }
     };
     const onSubmit = (e: Event) => { if (!onUi(e.target) && e.target instanceof Element) record({ type: 'submit', locator: buildLocators(e.target) }); };
     const onNav = () => record({ type: 'navigate' });
@@ -408,18 +400,14 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
     history.pushState = function (this: History, ...args: any[]) { const r = origPush.apply(this, args as any); onNav(); return r; } as typeof history.pushState;
     history.replaceState = function (this: History, ...args: any[]) { const r = origReplace.apply(this, args as any); onNav(); return r; } as typeof history.replaceState;
     return () => {
-      document.removeEventListener('click', onClick, true);
-      document.removeEventListener('change', onChange, true);
-      document.removeEventListener('submit', onSubmit, true);
-      window.removeEventListener('popstate', onNav);
+      document.removeEventListener('click', onClick, true); document.removeEventListener('change', onChange, true);
+      document.removeEventListener('submit', onSubmit, true); window.removeEventListener('popstate', onNav);
       history.pushState = origPush; history.replaceState = origReplace;
     };
   }, [active, recording]);
 
-  // when recording stops, clear the persisted flag (keep actions for the report)
   useEffect(() => { if (active && !recording) { try { sessionStorage.removeItem(REC_KEY); } catch { /* ignore */ } } }, [active, recording]);
 
-  // reference image via paste while active (not recording)
   useEffect(() => {
     if (!active || recording) return;
     const onPaste = (e: ClipboardEvent) => {
@@ -431,86 +419,100 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
   }, [active, recording]);
 
   const readImage = useCallback((file: File) => {
-    const r = new FileReader();
-    r.onload = () => setReferenceImage(typeof r.result === 'string' ? r.result : null);
-    r.readAsDataURL(file);
+    const r = new FileReader(); r.onload = () => setReferenceImage(typeof r.result === 'string' ? r.result : null); r.readAsDataURL(file);
   }, []);
 
-  const snipRegion = useCallback(async (box: Box) => {
-    const url = await withTimeout(captureScreenshot([], box), 8000, null);
-    if (url) setRegionShot(url);
-  }, []);
-
-  // ----- drawing (page coords) -----
-  const pagePt = (e: React.PointerEvent) => ({ x: e.clientX + window.scrollX, y: e.clientY + window.scrollY });
-  const onDrawStart = (e: React.PointerEvent) => {
-    if (tool === 'inspect') return;
+  // ----- page drawing / snip marquee (page coords) -----
+  const pagePt = (e: React.PointerEvent): Pt => ({ x: e.clientX + window.scrollX, y: e.clientY + window.scrollY });
+  const onPageDown = (e: React.PointerEvent) => {
+    if (!(tool === 'snip' || isDrawTool(tool))) return;
     (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
     const p = pagePt(e); drawStart.current = p;
-    if (tool === 'pen') setDraft({ type: 'pen', pts: [[p.x, p.y]] });
-    else if (tool === 'arrow') setDraft({ type: 'arrow', x1: p.x, y1: p.y, x2: p.x, y2: p.y });
-    else setDraft({ type: 'rect', x: p.x, y: p.y, w: 0, h: 0 }); // rect or region
+    setDraft(tool === 'pen' ? { type: 'pen', pts: [[p.x, p.y]] } : nonPenShape(tool, p, p));
   };
-  const onDrawMove = (e: React.PointerEvent) => {
+  const onPageMove = (e: React.PointerEvent) => {
     const s = drawStart.current; if (!s) return; const p = pagePt(e);
     if (tool === 'pen') setDraft((d) => (d && d.type === 'pen' ? { type: 'pen', pts: [...d.pts, [p.x, p.y]] } : d));
-    else if (tool === 'arrow') setDraft({ type: 'arrow', x1: s.x, y1: s.y, x2: p.x, y2: p.y });
-    else setDraft({ type: 'rect', x: Math.min(s.x, p.x), y: Math.min(s.y, p.y), w: Math.abs(p.x - s.x), h: Math.abs(p.y - s.y) });
+    else setDraft(nonPenShape(tool, s, p));
   };
-  const onDrawEnd = () => {
-    const d = draft; drawStart.current = null; setDraft(null);
+  const onPageUp = async () => {
+    const d = draft; const s = drawStart.current; drawStart.current = null; setDraft(null);
     if (!d) return;
-    if (tool === 'region') {
-      if (d.type === 'rect' && d.w > 4 && d.h > 4) { const box = { x: d.x, y: d.y, w: d.w, h: d.h }; setRegion(box); void snipRegion(box); }
-      setTool('inspect');
-    } else { setShapes((s) => [...s, d]); }
+    if (tool === 'snip') {
+      if (d.type === 'rect' && d.w > 6 && d.h > 6) {
+        const url = await withTimeout(cropRegion({ x: d.x, y: d.y, w: d.w, h: d.h }), 8000, null);
+        if (url) { const img = await loadImg(url); const scale = Math.min(Math.min(window.innerWidth * 0.8, 900) / img.width, (window.innerHeight * 0.65) / img.height, 1); setSnip({ url, w: img.width, h: img.height, scale }); setSnipShapes([]); setTool('arrow'); setDrawOpen(true); }
+        else showToast('Snip failed (html-to-image)');
+      }
+      void s;
+    } else { setShapes((arr) => [...arr, d]); }
   };
 
+  // ----- snip-editor drawing (image-local coords, baked into the image — no stored coords) -----
+  const snipPt = (e: React.PointerEvent): Pt => {
+    const r = (e.currentTarget as Element).getBoundingClientRect(); const sc = snip ? snip.scale : 1;
+    return { x: (e.clientX - r.left) / sc, y: (e.clientY - r.top) / sc };
+  };
+  const onSnipDown = (e: React.PointerEvent) => {
+    if (!isDrawTool(tool)) return;
+    (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
+    const p = snipPt(e); snipStart.current = p;
+    setSnipDraft(tool === 'pen' ? { type: 'pen', pts: [[p.x, p.y]] } : nonPenShape(tool, p, p));
+  };
+  const onSnipMove = (e: React.PointerEvent) => {
+    const s = snipStart.current; if (!s) return; const p = snipPt(e);
+    if (tool === 'pen') setSnipDraft((d) => (d && d.type === 'pen' ? { type: 'pen', pts: [...d.pts, [p.x, p.y]] } : d));
+    else setSnipDraft(nonPenShape(tool, s, p));
+  };
+  const onSnipUp = () => { const d = snipDraft; snipStart.current = null; setSnipDraft(null); if (d) setSnipShapes((a) => [...a, d]); };
+
   const undo = () => {
+    if (snip) return setSnipShapes((a) => a.slice(0, -1));
     if (shapes.length) return setShapes((s) => s.slice(0, -1));
-    if (region) { setRegion(null); setRegionShot(null); return; }
     if (targets.length) return setTargets((t) => t.slice(0, -1));
     if (actions.length) return setActions((a) => a.slice(0, -1));
   };
+
+  const pickTool = (t: Tool) => { setTool(t); if (isDrawTool(t)) setDrawOpen(true); else if (t !== null) setDrawOpen(false); };
 
   const submit = useCallback(async () => {
     if (submitting) return;
     setSubmitting(true);
     try {
-      const all = draft ? [...shapes, draft] : shapes;
-      const screenshot = await withTimeout(captureScreenshot(all, region), 8000, null);
+      const isSnip = !!snip;
+      let screenshot: string | null;
+      if (isSnip && snip) screenshot = await withTimeout(flattenSnip(snip.url, snipShapes), 8000, snip.url);
+      else { const all = draft ? [...shapes, draft] : shapes; screenshot = await withTimeout(captureFull(all), 8000, null); }
       const payload = {
         comment,
         route: window.location.pathname + window.location.search,
         viewport: { width: window.innerWidth, height: window.innerHeight, dpr: window.devicePixelRatio || 1, scrollX: window.scrollX, scrollY: window.scrollY },
-        captureType: region ? 'region' : 'full',
-        region, coordSpace: 'page',
-        annotations: all,
-        targets, element: targets[0] ?? null,
+        captureType: isSnip ? 'snip' : 'full',
+        coordSpace: isSnip ? null : 'page',
+        // snip drawings are baked into the image — no coordinates are stored
+        annotations: isSnip ? [] : (draft ? [...shapes, draft] : shapes),
+        targets: isSnip ? [] : targets,
+        element: isSnip ? null : (targets[0] ?? null),
         actions,
         screenshot, referenceImage,
       };
       const res = await fetch(ENDPOINT, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) });
       const data = await res.json().catch(() => ({}));
-      if (res.ok) { showToast(`📍 Saved feedback #${data.id ?? ''}`); close(); }
-      else showToast(`Save failed (${res.status})`);
-    } catch {
-      showToast('Save failed — is the dev server running?');
-    } finally {
-      setSubmitting(false);
-    }
-  }, [submitting, shapes, draft, region, comment, targets, actions, referenceImage, close, showToast]);
+      if (res.ok) { showToast(`📍 Saved feedback #${data.id ?? ''}`); close(); } else showToast(`Save failed (${res.status})`);
+    } catch { showToast('Save failed — is the dev server running?'); } finally { setSubmitting(false); }
+  }, [submitting, snip, snipShapes, shapes, draft, comment, targets, actions, referenceImage, close, showToast]);
 
   if (!mounted) return null;
 
-  const renderShape = (s: Shape, key: number) => {
-    if (s.type === 'rect') return <rect key={key} x={s.x} y={s.y} width={s.w} height={s.h} fill="none" stroke={ACCENT} strokeWidth={3} />;
-    if (s.type === 'ellipse') return <ellipse key={key} cx={s.cx} cy={s.cy} rx={Math.abs(s.rx)} ry={Math.abs(s.ry)} fill="none" stroke={ACCENT} strokeWidth={3} />;
-    if (s.type === 'arrow') return <line key={key} x1={s.x1} y1={s.y1} x2={s.x2} y2={s.y2} stroke={ACCENT} strokeWidth={3} markerEnd="url(#np-arrow)" />;
-    return <path key={key} d={s.pts.map(([x, y], i) => `${i ? 'L' : 'M'}${x},${y}`).join(' ')} fill="none" stroke={ACCENT} strokeWidth={3} strokeLinejoin="round" strokeLinecap="round" />;
+  const renderShape = (s: Shape, key: number, sw = 3) => {
+    if (s.type === 'rect') return <rect key={key} x={s.x} y={s.y} width={s.w} height={s.h} fill="none" stroke={ACCENT} strokeWidth={sw} />;
+    if (s.type === 'ellipse') return <ellipse key={key} cx={s.cx} cy={s.cy} rx={Math.abs(s.rx)} ry={Math.abs(s.ry)} fill="none" stroke={ACCENT} strokeWidth={sw} />;
+    if (s.type === 'arrow') return <line key={key} x1={s.x1} y1={s.y1} x2={s.x2} y2={s.y2} stroke={ACCENT} strokeWidth={sw} markerEnd="url(#np-arrow)" />;
+    return <path key={key} d={s.pts.map(([x, y], i) => `${i ? 'L' : 'M'}${x},${y}`).join(' ')} fill="none" stroke={ACCENT} strokeWidth={sw} strokeLinejoin="round" strokeLinecap="round" />;
   };
 
-  const drawingActive = active && !recording && tool !== 'inspect';
+  const pageDrawActive = active && !recording && !snip && (tool === 'snip' || isDrawTool(tool));
+  const snipSw = snip ? Math.max(2, snip.w * 0.004) : 3;
 
   const content = (
     <div data-nitpick-ui="root" style={{ position: 'fixed', inset: 0, zIndex: Z, pointerEvents: 'none', fontFamily: 'ui-sans-serif, system-ui, sans-serif' }}>
@@ -522,10 +524,10 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
         </button>
       )}
 
-      {/* RECORDING: overlay hidden, only a small indicator (events captured in the background) */}
+      {/* RECORDING indicator */}
       {active && recording && (
         <div data-nitpick-ui style={{ position: 'fixed', bottom: 16, left: '50%', transform: 'translateX(-50%)', display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderRadius: 999, background: 'rgba(20,20,22,0.95)', color: '#fff', boxShadow: '0 4px 20px rgba(0,0,0,0.45)', pointerEvents: 'auto', fontSize: 12 }}>
-          <span style={{ width: 9, height: 9, borderRadius: '50%', background: ACCENT, boxShadow: `0 0 0 3px rgba(255,45,85,0.3)` }} />
+          <span style={{ width: 9, height: 9, borderRadius: '50%', background: ACCENT, boxShadow: '0 0 0 3px rgba(255,45,85,0.3)' }} />
           Recording · {actions.length} action{actions.length === 1 ? '' : 's'}
           <button onClick={() => setRecording(false)} style={{ ...toolBtn(false), padding: '4px 10px' }}>■ Stop</button>
         </div>
@@ -533,30 +535,56 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
 
       {active && !recording && (
         <>
-          {/* annotation + capture surface */}
-          <svg data-nitpick-ui width="100%" height="100%"
-            style={{ position: 'fixed', inset: 0, pointerEvents: drawingActive ? 'auto' : 'none', cursor: drawingActive ? 'crosshair' : 'default' }}
-            onPointerDown={onDrawStart} onPointerMove={onDrawMove} onPointerUp={onDrawEnd}>
-            <defs>
-              <marker id="np-arrow" markerWidth="10" markerHeight="10" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
-                <path d="M0,0 L7,3 L0,6 Z" fill={ACCENT} />
-              </marker>
-            </defs>
-            <g transform={`translate(${-scroll.x},${-scroll.y})`}>
-              {region && <rect x={region.x} y={region.y} width={region.w} height={region.h} fill="rgba(255,45,85,0.06)" stroke={ACCENT} strokeWidth={2} strokeDasharray="6 4" />}
-              {targets.map((t, i) => (
-                <g key={`t${i}`}>
-                  <rect x={t.boundingBox.x} y={t.boundingBox.y} width={t.boundingBox.w} height={t.boundingBox.h} fill="rgba(255,45,85,0.08)" stroke={ACCENT} strokeWidth={2} rx={3} />
-                  <text x={t.boundingBox.x + 4} y={t.boundingBox.y + 14} fill={ACCENT} fontSize={12} fontWeight={700}>{i + 1}</text>
-                </g>
-              ))}
-              {shapes.map((s, i) => renderShape(s, i))}
-              {draft && renderShape(draft, -1)}
-            </g>
-          </svg>
+          {/* page annotation surface */}
+          {!snip && (
+            <svg data-nitpick-ui width="100%" height="100%"
+              style={{ position: 'fixed', inset: 0, pointerEvents: pageDrawActive ? 'auto' : 'none', cursor: pageDrawActive ? 'crosshair' : 'default' }}
+              onPointerDown={onPageDown} onPointerMove={onPageMove} onPointerUp={onPageUp}>
+              <defs>
+                <marker id="np-arrow" markerWidth="10" markerHeight="10" refX="7" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L7,3 L0,6 Z" fill={ACCENT} /></marker>
+              </defs>
+              <g transform={`translate(${-scroll.x},${-scroll.y})`}>
+                {targets.map((t, i) => (
+                  <g key={`t${i}`}>
+                    <rect x={t.boundingBox.x} y={t.boundingBox.y} width={t.boundingBox.w} height={t.boundingBox.h} fill="rgba(255,45,85,0.08)" stroke={ACCENT} strokeWidth={2} rx={3} />
+                    <text x={t.boundingBox.x + 4} y={t.boundingBox.y + 14} fill={ACCENT} fontSize={12} fontWeight={700}>{i + 1}</text>
+                  </g>
+                ))}
+                {shapes.map((s, i) => renderShape(s, i))}
+                {draft && renderShape(draft, -1)}
+              </g>
+            </svg>
+          )}
 
-          {tool === 'inspect' && hovered && (
+          {tool === 'inspect' && hovered && !snip && (
             <div data-nitpick-ui style={{ position: 'fixed', left: hovered.left, top: hovered.top, width: hovered.width, height: hovered.height, outline: `2px solid ${ACCENT}`, background: 'rgba(255,45,85,0.08)', borderRadius: 2, pointerEvents: 'none' }} />
+          )}
+
+          {/* SNIP editor */}
+          {snip && (
+            <div data-nitpick-ui style={{ position: 'fixed', inset: 0, background: 'rgba(10,10,14,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'auto' }}>
+              <div style={{ background: '#1a1a1e', padding: 10, borderRadius: 12, boxShadow: '0 12px 40px rgba(0,0,0,0.6)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                  <span style={{ color: '#fff', fontSize: 12, fontWeight: 700, marginRight: 'auto' }}>✂ Snip — draw on it, then Save</span>
+                  {(['arrow', 'circle', 'box', 'pen'] as DrawTool[]).map((t) => (
+                    <button key={t} onClick={() => setTool(t)} style={toolBtn(tool === t)}>{drawIcon(t)}</button>
+                  ))}
+                  <button onClick={() => setSnipShapes((a) => a.slice(0, -1))} disabled={!snipShapes.length} style={toolBtn(false)}>↩</button>
+                  <button onClick={() => { setSnip(null); setSnipShapes([]); setSnipDraft(null); }} title="Discard snip" style={toolBtn(false)}>✕</button>
+                </div>
+                <div style={{ position: 'relative', width: snip.w * snip.scale, height: snip.h * snip.scale }}>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={snip.url} alt="snip" style={{ width: snip.w * snip.scale, height: snip.h * snip.scale, display: 'block', borderRadius: 6 }} />
+                  <svg viewBox={`0 0 ${snip.w} ${snip.h}`} width={snip.w * snip.scale} height={snip.h * snip.scale}
+                    style={{ position: 'absolute', inset: 0, cursor: isDrawTool(tool) ? 'crosshair' : 'default' }}
+                    onPointerDown={onSnipDown} onPointerMove={onSnipMove} onPointerUp={onSnipUp}>
+                    <defs><marker id="np-arrow-snip" markerWidth="10" markerHeight="10" refX="7" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L7,3 L0,6 Z" fill={ACCENT} /></marker></defs>
+                    {snipShapes.map((s, i) => renderSnipShape(s, i, snipSw))}
+                    {snipDraft && renderSnipShape(snipDraft, -1, snipSw)}
+                  </svg>
+                </div>
+              </div>
+            </div>
           )}
 
           {/* draggable toolbox */}
@@ -567,27 +595,29 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
                 onPointerMove={(e) => { if (dragOff.current) setPos({ x: e.clientX - dragOff.current.x, y: e.clientY - dragOff.current.y }); }}
                 onPointerUp={() => { dragOff.current = null; }}
                 style={{ cursor: 'grab', userSelect: 'none', fontSize: 16, opacity: 0.7, padding: '0 4px' }}>⠿</span>
-              {([['inspect', '⌖ Inspect'], ['arrow', '↗ Arrow'], ['pen', '✎ Draw'], ['rect', '▭ Box'], ['region', '⬚ Area']] as [Tool, string][]).map(([t, label]) => (
-                <button key={t} onClick={() => setTool(t)} style={toolBtn(tool === t)}>{label}</button>
-              ))}
+              <button onClick={() => pickTool('inspect')} style={toolBtn(tool === 'inspect')}>⌖ Inspect</button>
+              <button onClick={() => { setDrawOpen((o) => !o || !isDrawTool(tool)); if (!isDrawTool(tool)) setTool('arrow'); }} style={toolBtn(isDrawTool(tool))}>✎ Draw ▾</button>
+              <button onClick={() => pickTool('snip')} style={toolBtn(tool === 'snip')}>✂ Snip</button>
               <button onClick={() => setRecording(true)} title="Record clicks / inputs / navigation across screens" style={{ ...toolBtn(false), borderColor: ACCENT }}>● Record</button>
               <button onClick={undo} title="Undo" style={{ ...toolBtn(false), marginLeft: 'auto' }}>↩</button>
               <button onClick={close} title="Close (Esc)" style={toolBtn(false)}>✕</button>
             </div>
+            {drawOpen && (
+              <div style={{ display: 'flex', gap: 6, padding: '8px 10px', borderBottom: '1px solid #333' }}>
+                {(['arrow', 'circle', 'box', 'pen'] as DrawTool[]).map((t) => (
+                  <button key={t} onClick={() => setTool(t)} style={toolBtn(tool === t)}>{drawIcon(t)}</button>
+                ))}
+                <span style={{ fontSize: 10, opacity: 0.55, alignSelf: 'center', marginLeft: 6 }}>draw anywhere on the page</span>
+              </div>
+            )}
             <div style={{ padding: 10, display: 'flex', gap: 10, alignItems: 'flex-start' }}
               onDragOver={(e) => e.preventDefault()}
               onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f && f.type.startsWith('image/')) readImage(f); }}>
               <textarea value={comment} onChange={(e) => setComment(e.target.value)}
-                placeholder="What's wrong? Inspect elements, draw anywhere, snip an Area, or Record a flow — then Save."
+                placeholder="What's wrong? Pick a tool above (Inspect / Draw / Snip / Record), then Save."
                 style={{ flex: 1, minHeight: 52, resize: 'vertical', borderRadius: 8, border: '1px solid #3a3a40', background: '#1a1a1e', color: '#fff', padding: 8, fontSize: 12, boxSizing: 'border-box', outline: 'none' }} />
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6, width: 128 }}>
-                {region && regionShot ? (
-                  <div style={{ position: 'relative' }}>
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={regionShot} alt="area snip" style={{ width: '100%', height: 40, objectFit: 'cover', borderRadius: 6, border: `1px solid ${ACCENT}` }} />
-                    <button onClick={() => { setRegion(null); setRegionShot(null); }} style={badgeX}>×</button>
-                  </div>
-                ) : referenceImage ? (
+                {referenceImage ? (
                   <div style={{ position: 'relative' }}>
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src={referenceImage} alt="reference" style={{ width: '100%', height: 40, objectFit: 'cover', borderRadius: 6, border: '1px solid #3a3a40' }} />
@@ -605,16 +635,14 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
               </div>
             </div>
             <div style={{ padding: '0 10px 8px', fontSize: 10, opacity: 0.6 }}>
-              {targets.length} element{targets.length === 1 ? '' : 's'} · {shapes.length} annotation{shapes.length === 1 ? '' : 's'} · {actions.length} action{actions.length === 1 ? '' : 's'} · {region ? 'area snip' : 'full-page'} screenshot
+              {snip ? 'snip image' : `${targets.length} element${targets.length === 1 ? '' : 's'} · ${shapes.length} drawing${shapes.length === 1 ? '' : 's'} · full-page shot`} · {actions.length} action{actions.length === 1 ? '' : 's'}
             </div>
           </div>
         </>
       )}
 
       {toast && (
-        <div data-nitpick-ui style={{ position: 'fixed', bottom: 16, left: '50%', transform: 'translateX(-50%)', padding: '8px 14px', borderRadius: 999, fontSize: 13, color: '#fff', background: 'rgba(20,20,22,0.95)', boxShadow: '0 4px 20px rgba(0,0,0,0.4)' }}>
-          {toast}
-        </div>
+        <div data-nitpick-ui style={{ position: 'fixed', bottom: 16, left: '50%', transform: 'translateX(-50%)', padding: '8px 14px', borderRadius: 999, fontSize: 13, color: '#fff', background: 'rgba(20,20,22,0.95)', boxShadow: '0 4px 20px rgba(0,0,0,0.4)' }}>{toast}</div>
       )}
     </div>
   );
@@ -622,10 +650,16 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
   return createPortal(content, document.body);
 }
 
+function renderSnipShape(s: Shape, key: number, sw: number) {
+  if (s.type === 'rect') return <rect key={key} x={s.x} y={s.y} width={s.w} height={s.h} fill="none" stroke={ACCENT} strokeWidth={sw} />;
+  if (s.type === 'ellipse') return <ellipse key={key} cx={s.cx} cy={s.cy} rx={Math.abs(s.rx)} ry={Math.abs(s.ry)} fill="none" stroke={ACCENT} strokeWidth={sw} />;
+  if (s.type === 'arrow') return <line key={key} x1={s.x1} y1={s.y1} x2={s.x2} y2={s.y2} stroke={ACCENT} strokeWidth={sw} markerEnd="url(#np-arrow-snip)" />;
+  return <path key={key} d={s.pts.map(([x, y], i) => `${i ? 'L' : 'M'}${x},${y}`).join(' ')} fill="none" stroke={ACCENT} strokeWidth={sw} strokeLinejoin="round" strokeLinecap="round" />;
+}
+function drawIcon(t: DrawTool): string {
+  return t === 'arrow' ? '↗ Arrow' : t === 'circle' ? '◯ Circle' : t === 'box' ? '▭ Box' : '✎ Pen';
+}
 function toolBtn(active: boolean): React.CSSProperties {
-  return {
-    fontSize: 11, fontWeight: 600, padding: '5px 8px', borderRadius: 7, cursor: 'pointer',
-    border: `1px solid ${active ? ACCENT : '#3a3a40'}`, background: active ? 'rgba(255,45,85,0.20)' : '#1a1a1e', color: '#fff', whiteSpace: 'nowrap',
-  };
+  return { fontSize: 11, fontWeight: 600, padding: '5px 8px', borderRadius: 7, cursor: 'pointer', border: `1px solid ${active ? ACCENT : '#3a3a40'}`, background: active ? 'rgba(255,45,85,0.20)' : '#1a1a1e', color: '#fff', whiteSpace: 'nowrap' };
 }
 const badgeX: React.CSSProperties = { position: 'absolute', top: -8, right: -8, width: 18, height: 18, borderRadius: 9, border: 'none', background: ACCENT, color: '#fff', fontSize: 11, cursor: 'pointer', padding: 0 };

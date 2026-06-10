@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.2.2 — unreleased
+
+Toolbox UX refinements.
+
+- **No tool selected by default** on activation — the toolbox opens neutral (the page stays
+  interactive until you pick a tool).
+- **Draw** is now a group: **Arrow / Circle / Box / Pen** live under it (Circle is back, as a
+  draw sub-tool). Drawn anywhere on the page as vector annotations.
+- **Area → Snip**: drag a region, then **draw directly on the cropped image**; Save stores just
+  that flattened image + comment. Snip drawings are **baked into the image — no coordinates are
+  persisted** (`captureType: "snip"`, empty `annotations`/`targets`).
+- **Record** field capture clarified: text inputs → value; `<select>` → selected option text;
+  radio/checkbox → checked/unchecked (+value); password → redacted; plus clicks, submits, and
+  navigation (unchanged).
+
 ## 0.2.1 — unreleased
 
 Action recording + toolbox fixes.
