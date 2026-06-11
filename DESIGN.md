@@ -181,31 +181,41 @@ Triggered by `/nitpick:process` or when the user mentions processing UI feedback
    one-line note of what changed.
 4. Move to the next; summarize at the end.
 
-## Screenshots — bounded region capture (v0.3.2)
+## Screenshots — render full, crop ourselves (v0.4.1)
 
-This is the part that was repeatedly broken, so it's worth stating the root cause plainly.
+This is the part that was repeatedly broken, so the failure history is stated plainly. Two
+approaches are **known-bad — do not reintroduce them**:
 
-`html-to-image` renders `document.documentElement` from the page's top-left and — left to itself
-— sizes the output to the element's **client** height, i.e. **one viewport tall**. So a naive
-`toPng(document.documentElement)` only ever captures the **top** of the page. Compositing
-below-the-fold annotations onto that image put them off-canvas (the "screenshot shows the top,
-no marks" bug); cropping a snip at page coordinates from it failed for the same reason.
+1. **Naive `toPng(document.documentElement)` (pre-v0.3.2):** `html-to-image` sizes the output to
+   the element's **client** height — one viewport tall — so only the **top** of the page was ever
+   captured; below-the-fold snips/marks came out blank or misplaced.
+2. **Region frame + root transform (v0.3.2–v0.4.0):** give `html-to-image` a region-sized frame
+   and `style: { transform: translate(-x, -y) }` on the cloned document. This *used to* work, but
+   **modern Chromium ignores transforms (and negative margins) on the root element when
+   rasterizing SVG-image documents**: the serialized clone is correct, yet at paint time the page
+   reflows into the small frame and never shifts — snips came out **blank on light pages and
+   black on dark pages** (the dark `backgroundColor` was all that painted). Verified by diffing
+   the serialized SVG (correct, transform present) against its rasterization (content missing).
 
-The fix is a single primitive, `captureRegion(box)` (`box` in **page coordinates**):
+The current primitive (v0.4.1): **render the entire document once at its full scroll size with
+explicit `width`/`height` — supported everywhere, no root transforms involved — then crop regions
+out of that image on a canvas ourselves** (`renderDocument()` + `cropFrom(full, box)`, `box` in
+**page coordinates**). The pixel ratio is budgeted against the full page area
+(`MAX_CANVAS_AREA`/`MAX_CANVAS_DIM`, halving until it fits) so the intermediate canvas always
+stays within browser limits, degrading resolution gracefully on very long pages instead of
+failing. This is plain DOM + canvas: no React/Next version dependence, works the same in every
+scheme (light/dark), at any dpr, at any scroll position. Everything builds on it:
 
-- give `html-to-image` an **explicit frame** the exact size of the region (`width`/`height`), and
-- apply `style: { transform: translate(-box.x, -box.y) }` to the cloned document,
+- **Inspect** → one `renderDocument()` + `cropFrom(bb)` per element → `<id>-1.png`, `<id>-2.png`,
+  … (one render for all elements; correct even for elements scrolled off-screen by Save time).
+- **Snip** → `captureRegion(snipBox)` crops precisely the dragged region — even straddling an
+  element edge — which you then mark up; marks are baked into the image (no coordinates stored).
+- **Comment-only / Fix me** → `captureRegion(viewport)` for a context shot (`<id>.png`).
 
-so exactly `[x, y, w, h]` of the page is rendered into the frame — **correct at any scroll
-position**, and always within the browser's max-canvas size because the frame is a region, never
-the whole long page. Everything builds on it:
-
-- **Inspect** → `captureRegion(target.boundingBox)` per element → `<id>-1.png`, `<id>-2.png`, …
-  (correct even for elements that have scrolled off-screen by Save time).
-- **Snip** → `captureRegion(snipBox)` renders precisely the dragged region — the full snipped
-  area, even if it straddles an element edge — which you then mark up; those marks are baked into
-  the image (no coordinates stored).
-- **Comment-only** → `captureRegion(viewport)` for a context shot (`<id>.png`).
+The `/nitpick:sanity` suite guards this with a **pixel-fidelity check**: the captured snip is
+compared against a native browser screenshot of the same region (downsampled grid, mean channel
+diff ≤ 32/255), in light **and** `--color-scheme=dark` — an editor that merely "opens" with a
+blank/black image fails loudly.
 
 Capture is **best-effort**: if `html-to-image` is absent or throws, the report still saves with
 its comment + metadata (and, for Inspect, full element targets) and stays actionable. A brief

@@ -30,7 +30,7 @@ import { resolveElementInfo, type ElementInfo } from './nitpick-source';
 const ACCENT = '#ff2d55';
 const Z = 2147483600;
 const ENDPOINT = '/api/nitpick';
-const NITPICK_VERSION = '0.4.0'; // keep in sync with plugin.json (CI checks this)
+const NITPICK_VERSION = '0.4.1'; // keep in sync with plugin.json (CI checks this)
 
 // ----------------------------------------------------------------- hotkey
 
@@ -231,24 +231,54 @@ function pageBackground(): string {
   return '#ffffff';
 }
 // Capture an arbitrary PAGE-coordinate region as a PNG — correct at ANY scroll position, even
-// for a region that is entirely off-screen. html-to-image renders document.documentElement from
-// the page's top-left and, left to itself, clips to a single viewport height (that's why earlier
-// captures only ever showed the top of the page). We instead give it an explicit frame the size
-// of the region and shift the cloned document up/left by the region's origin, so exactly
-// [x, y, w, h] of the page lands in the frame. The frame is a bounded region (never the whole long
-// page), so it always stays within the browser's max-canvas size. Returns the data URL + ratio.
-async function captureRegion(box: Box, includeUi = false): Promise<{ url: string; pr: number } | null> {
+// for a region that is entirely off-screen. We render the WHOLE document once at its full
+// scroll size and crop the region out of that image on a canvas ourselves.
+//
+// Two earlier approaches both failed, so don't reintroduce them:
+//  • toPng(documentElement) with no size → html-to-image clips to one viewport height (only the
+//    top of the page ever captured — the v0.3.2 bug).
+//  • a region-sized frame + transform: translate(-x,-y) on the cloned root → modern Chromium
+//    IGNORES transforms on the root element when rasterizing SVG-image documents, so the page
+//    reflowed into the small frame and snips came out blank (light pages) or black (dark pages).
+//    Negative margins on the root are ignored the same way.
+// Rendering with explicit full dimensions + canvas cropping uses no root transforms at all and
+// works across browsers and frameworks. The pixel ratio is budgeted against the full page size
+// so the intermediate canvas always stays within browser limits.
+const MAX_CANVAS_AREA = 100_000_000; // px² — well under Chrome's ~268M canvas-area limit
+const MAX_CANVAS_DIM = 16000;        // px — under the 16384 per-dimension limit
+
+interface FullRender { img: HTMLImageElement; pr: number }
+async function renderDocument(includeUi = false): Promise<FullRender | null> {
   const mod: any = await import('html-to-image').catch(() => null);
   if (!mod || !mod.toPng) return null;
-  const pr = Math.min(window.devicePixelRatio || 1, 2);
-  const w = Math.max(1, Math.round(box.w)); const h = Math.max(1, Math.round(box.h));
+  const doc = document.documentElement;
+  const fw = Math.max(doc.scrollWidth, doc.clientWidth);
+  const fh = Math.max(doc.scrollHeight, doc.clientHeight);
+  let pr = Math.min(window.devicePixelRatio || 1, 2);
+  while (pr > 0.5 && (fw * pr * fh * pr > MAX_CANVAS_AREA || fw * pr > MAX_CANVAS_DIM || fh * pr > MAX_CANVAS_DIM)) pr /= 2;
   try {
-    const url: string = await mod.toPng(document.documentElement, {
-      width: w, height: h, pixelRatio: pr, cacheBust: true, backgroundColor: pageBackground(), filter: includeUi ? capturingFilter : nitpickFilter,
-      style: { margin: '0', transform: `translate(${-box.x}px, ${-box.y}px)`, transformOrigin: 'top left' },
+    const url: string = await mod.toPng(doc, {
+      width: fw, height: fh, pixelRatio: pr, cacheBust: true, backgroundColor: pageBackground(),
+      filter: includeUi ? capturingFilter : nitpickFilter,
+      style: { margin: '0' },
     });
-    return { url, pr };
+    return { img: await loadImg(url), pr };
   } catch { return null; }
+}
+function cropFrom(full: FullRender, box: Box): { url: string; pr: number } | null {
+  try {
+    const { img, pr } = full;
+    const w = Math.max(1, Math.round(box.w * pr)); const h = Math.max(1, Math.round(box.h * pr));
+    const canvas = document.createElement('canvas'); canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext('2d'); if (!ctx) return null;
+    ctx.fillStyle = pageBackground(); ctx.fillRect(0, 0, w, h); // regions past the page edge stay page-colored
+    ctx.drawImage(img, Math.round(box.x * pr), Math.round(box.y * pr), w, h, 0, 0, w, h);
+    return { url: canvas.toDataURL('image/png'), pr };
+  } catch { return null; }
+}
+async function captureRegion(box: Box, includeUi = false): Promise<{ url: string; pr: number } | null> {
+  const full = await renderDocument(includeUi);
+  return full ? cropFrom(full, box) : null;
 }
 // Capture exactly the viewport the user is looking at (a context shot for comment-only reports).
 async function captureViewport(includeUi = false): Promise<string | null> {
@@ -256,16 +286,16 @@ async function captureViewport(includeUi = false): Promise<string | null> {
   return cap ? cap.url : null;
 }
 // One cropped screenshot per Inspected element (a little padding for context). Saved as
-// <id>-1.png, <id>-2.png, … aligned with `targets`.
+// <id>-1.png, <id>-2.png, … aligned with `targets`. The document is rendered ONCE and every
+// element is cropped from the same image.
 async function captureElementImages(targets: Target[]): Promise<(string | null)[]> {
-  const out: (string | null)[] = []; const pad = 8;
-  for (const t of targets.slice(0, 20)) {
+  const full = await renderDocument(); const pad = 8;
+  return targets.slice(0, 20).map((t) => {
+    if (!full) return null;
     const bb = t.boundingBox;
-    const box = { x: Math.max(0, bb.x - pad), y: Math.max(0, bb.y - pad), w: Math.max(1, bb.w + pad * 2), h: Math.max(1, bb.h + pad * 2) };
-    const cap = await captureRegion(box);
-    out.push(cap ? cap.url : null);
-  }
-  return out;
+    const cap = cropFrom(full, { x: Math.max(0, bb.x - pad), y: Math.max(0, bb.y - pad), w: Math.max(1, bb.w + pad * 2), h: Math.max(1, bb.h + pad * 2) });
+    return cap ? cap.url : null;
+  });
 }
 // Bake the snip-editor drawings into the cropped image (image-local coords, scale 1).
 async function flattenSnip(url: string, shapes: Shape[]): Promise<string> {
@@ -487,7 +517,7 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
     if (!m || m.type !== 'rect' || m.w <= 6 || m.h <= 6) return;
     const box = { x: m.x, y: m.y, w: m.w, h: m.h };
     setCapturing(true);
-    const cap = await withTimeout(captureRegion(box), 8000, null);
+    const cap = await withTimeout(captureRegion(box), 15000, null);
     setCapturing(false);
     if (cap) {
       const img = await loadImg(cap.url);
@@ -561,10 +591,10 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
       const reportTargets = isSnip || isMeta ? [] : targets;
       let screenshot: string | null = null;
       let targetImages: (string | null)[] = [];
-      if (isMeta) screenshot = await withTimeout(captureViewport(true), 8000, null); // WITH the Nitpick UI — it's the subject
+      if (isMeta) screenshot = await withTimeout(captureViewport(true), 12000, null); // WITH the Nitpick UI — it's the subject
       else if (isSnip && snip) screenshot = await withTimeout(flattenSnip(snip.url, snipShapes), 8000, snip.url);
-      else if (reportTargets.length) targetImages = await withTimeout(captureElementImages(reportTargets), 12000, []);
-      else if (!isRecording) screenshot = await withTimeout(captureViewport(), 8000, null);
+      else if (reportTargets.length) targetImages = await withTimeout(captureElementImages(reportTargets), 15000, []);
+      else if (!isRecording) screenshot = await withTimeout(captureViewport(), 12000, null);
       // recording → action flow only, no screenshot
       const payload = {
         comment,

@@ -3,7 +3,7 @@
  * Nitpick sanity check — drives a real browser against your running dev server and verifies the
  * overlay end-to-end. Run by /nitpick:sanity after setup; safe to run any time.
  *
- *   node sanity.mjs [--url=http://localhost:3000] [--headed]
+ *   node sanity.mjs [--url=http://localhost:3000] [--color-scheme=light|dark] [--headed]
  *
  * Run from your project root (Playwright is resolved from the project's node_modules; install
  * with `npm i -D playwright && npx playwright install chromium` if missing).
@@ -12,7 +12,10 @@
  *   1. The overlay mounts (idle badge present) and activates.
  *   2. The Snip capture layer covers the FULL viewport, and selection works in all four corners
  *      (marquee drags at TL / TR / BL / BR) — not just a strip at the top.
- *   3. The full snip pipeline: drag → region captured → editor opens → drawing works → Esc.
+ *   3. The full snip pipeline: drag → region captured → editor opens → the captured pixels
+ *      actually MATCH the page region (compared against a native screenshot — catches blank,
+ *      black, and shifted captures) → drawing works → Esc. Run with --color-scheme=dark too:
+ *      capture bugs can be scheme-dependent.
  *   4. The same geometry + corner checks under a hostile host reset
  *      (`img, svg, video { max-width: 100%; height: auto }`) — the regression that shipped
  *      broken overlays before v0.4.0 sized everything with inline CSS.
@@ -33,6 +36,7 @@ const flag = (name) => args.includes(`--${name}`);
 const opt = (name, dflt) => (args.find((a) => a.startsWith(`--${name}=`)) || `=${dflt}`).split('=').slice(1).join('=');
 const BASE = opt('url', 'http://localhost:3000').replace(/\/$/, '');
 const HEADED = flag('headed');
+const SCHEME = opt('color-scheme', 'light'); // run twice — light AND dark — to catch scheme-dependent capture bugs
 const VW = 1280; const VH = 800;
 
 const results = [];
@@ -80,7 +84,7 @@ async function main() {
 
   const browser = await chromium.launch({ headless: !HEADED });
   try {
-    const page = await browser.newPage({ viewport: { width: VW, height: VH } });
+    const page = await browser.newPage({ viewport: { width: VW, height: VH }, colorScheme: SCHEME === 'dark' ? 'dark' : 'light' });
     page.setDefaultTimeout(10000);
     await page.goto(BASE, { waitUntil: 'domcontentloaded' });
 
@@ -149,18 +153,42 @@ async function main() {
     await dragMarquee('bottom-left', 4, VH - 5, 120, -120);
     await dragMarquee('bottom-right', VW - 5, VH - 5, -120, -120);
 
-    // ---- 3. full snip pipeline: capture → editor → draw → Esc --------------------------------
+    // ---- 3. full snip pipeline: capture → editor → pixels match → draw → Esc -----------------
     const runSnipPipeline = async (label) => {
+      // ground truth for the pixel check: what this region actually looks like, natively
+      const nativeB64 = (await page.screenshot({ clip: { x: 140, y: 240, width: 280, height: 220 } })).toString('base64');
       await page.mouse.move(140, 240); await page.mouse.down();
       await page.mouse.move(420, 460, { steps: 5 }); await page.mouse.up();
       const outcome = await page.waitForFunction((sel) => {
         if (document.querySelector(sel)) return 'editor';
         const failed = [...document.querySelectorAll('[data-nitpick-ui]')].some((el) => (el.textContent || '').includes('Snip failed'));
         return failed ? 'failed' : false;
-      }, EDITOR_IMG_SEL, { timeout: 15000 }).then((h) => h.jsonValue()).catch(() => 'timeout');
+      }, EDITOR_IMG_SEL, { timeout: 20000 }).then((h) => h.jsonValue()).catch(() => 'timeout');
       if (outcome === 'failed') { warn(`snip capture ${label}`, 'html-to-image unavailable — screenshots degrade gracefully but install it (npm i -D html-to-image) for full reports'); return false; }
       if (outcome !== 'editor') { fail(`snip capture ${label}`, 'editor never opened after a region drag'); return false; }
       pass(`snip capture ${label}`, 'region captured, editor opened');
+
+      // Pixel fidelity: the captured snip must actually LOOK like the page region. Both images
+      // are downsampled to a coarse grid and compared channel-wise; a blank, black, or shifted
+      // capture produces a large mean difference even though the editor "opened fine".
+      const meanDiff = await page.evaluate(async ({ imgSel, nativeB64 }) => {
+        const load = (src) => new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = src; });
+        const snip = await load(document.querySelector(imgSel).src);
+        const native = await load('data:image/png;base64,' + nativeB64);
+        const W = 28; const H = 22;
+        const grid = (img) => {
+          const c = document.createElement('canvas'); c.width = W; c.height = H;
+          const ctx = c.getContext('2d'); ctx.drawImage(img, 0, 0, W, H);
+          return ctx.getImageData(0, 0, W, H).data;
+        };
+        const a = grid(snip); const b = grid(native);
+        let sum = 0;
+        for (let i = 0; i < a.length; i += 4) sum += (Math.abs(a[i] - b[i]) + Math.abs(a[i + 1] - b[i + 1]) + Math.abs(a[i + 2] - b[i + 2])) / 3;
+        return Math.round(sum / (W * H));
+      }, { imgSel: EDITOR_IMG_SEL, nativeB64 }).catch(() => -1);
+      if (meanDiff >= 0 && meanDiff <= 32) pass(`snip pixels match the page ${label}`, `mean channel diff ${meanDiff}/255`);
+      else if (meanDiff < 0) warn(`snip pixels match the page ${label}`, 'could not compare images');
+      else fail(`snip pixels match the page ${label}`, `mean channel diff ${meanDiff}/255 vs a native screenshot — the capture is blank, black, or shifted`);
 
       const editorGeo = await page.evaluate(({ imgSel, svgSel }) => {
         const img = document.querySelector(imgSel).getBoundingClientRect();

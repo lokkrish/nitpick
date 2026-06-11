@@ -57,15 +57,19 @@ the user at `/nitpick:setup`.
 
    ```sh
    node "${CLAUDE_PLUGIN_ROOT}/templates/nitpick/sanity.mjs" --url=<dev-url>
+   node "${CLAUDE_PLUGIN_ROOT}/templates/nitpick/sanity.mjs" --url=<dev-url> --color-scheme=dark
    ```
 
-   The script prints one `[PASS]`/`[WARN]`/`[FAIL]` line per check and exits 0/1 (2 = couldn't
-   run). It verifies: overlay mounts and activates; the capture layer spans the full viewport;
-   `elementFromPoint` and a real marquee drag succeed at **top-left, top-right, bottom-left,
-   bottom-right**; the full snip pipeline (capture → editor → draw → Esc); the same geometry,
+   **Run it twice — light and dark.** Capture bugs can be scheme-dependent (a broken capture
+   once looked "fine" in light mode because blank-white resembles a white page, while dark mode
+   showed solid black). The script prints one `[PASS]`/`[WARN]`/`[FAIL]` line per check and
+   exits 0/1 (2 = couldn't run). It verifies: overlay mounts and activates; the capture layer
+   spans the full viewport; `elementFromPoint` and a real marquee drag succeed at **top-left,
+   top-right, bottom-left, bottom-right**; the full snip pipeline (capture → editor → **captured
+   pixels match a native screenshot of the same region** → draw → Esc); the same geometry,
    corner, and snip checks again **with an injected hostile reset**
-   (`img, svg, video { max-width: 100%; height: auto }`); Esc deactivation; and a POST → save →
-   cleanup round-trip through `/api/nitpick`.
+   (`img, svg, video { max-width: 100%; height: auto }`); Esc deactivation; the **Fix me** meta
+   round-trip; and a POST → save → cleanup round-trip through `/api/nitpick`.
 
 ## Phase 3 — report and diagnose
 
@@ -75,6 +79,9 @@ and offer the fix:
 - **Corner/coverage failures only under the hostile reset, or layer ≪ viewport** → the
   installed overlay predates v0.4.0 (svgs sized by presentation attributes); re-run
   `/nitpick:setup` to refresh the copy.
+- **"snip pixels match the page" fails (blank/black/shifted captures)** → the installed overlay
+  predates v0.4.1 (region capture used a root transform that modern Chromium ignores when
+  rasterizing); re-run `/nitpick:setup` to refresh the copy.
 - **Badge never appears** → overlay not mounted in the root layout, or the dev server is
   running a production build.
 - **API bridge failure** → route at the wrong path / underscore-prefixed folder / Pages-vs-App

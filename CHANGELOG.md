@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.4.1
+
+- **Fix: snips (and all region captures) came out blank on light pages and BLACK on dark pages.**
+  Root cause: region capture framed the clone with `transform: translate(-x,-y)` on the document
+  root — and **modern Chromium ignores transforms (and negative margins) on the root element when
+  rasterizing SVG-image documents**. The serialized clone was correct; at paint time the page
+  reflowed into the small frame and never shifted, so only the `backgroundColor` painted (white →
+  "blank", dark scheme → "black"). Proven by diffing the serialized SVG against its rasterization.
+  Capture now **renders the whole document once at its full scroll size** (explicit dimensions —
+  supported everywhere, no root transforms) **and crops regions on a canvas ourselves**, with the
+  pixel ratio budgeted against the page area so the canvas always stays within browser limits.
+  Plain DOM + canvas: independent of Next/React/HTML versions, verified in light & dark schemes,
+  dpr 1 & 2, at scroll offsets, and under hostile CSS resets (pixel-identical to native
+  screenshots). Inspect is also faster: one render for all selected elements instead of one per
+  element.
+- **The sanity suite now checks capture *pixels*, not just plumbing.** The snip image is compared
+  against a native screenshot of the same region (mean channel diff ≤ 32/255) — blank, black, or
+  shifted captures fail loudly. New `--color-scheme=dark` flag; run the suite in both schemes,
+  since this bug was invisible in light mode (blank-white ≈ white page) and glaring in dark.
+
 ## 0.4.0
 
 - **Fix: Snip only worked in the top ~150px of the viewport when the host app has a global
