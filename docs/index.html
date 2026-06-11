@@ -81,7 +81,7 @@
         <div class="card h-100 border-0 shadow-sm"><div class="card-body">
           <i class="bi bi-cursor-fill feature-ico"></i>
           <h5 class="mt-3">1 · Capture (in the browser)</h5>
-          <p class="text-muted mb-0">A dev-only overlay lives in your Next.js app. A draggable toolbox lets you <b>Inspect</b> (element + locators + a cropped image of each element), <b>Snip</b> a region and mark it up, or <b>Record</b> a multi-screen action flow — then add a comment and Save.</p>
+          <p class="text-muted mb-0">A dev-only overlay lives in your Next.js app. A draggable toolbox lets you <b>Inspect</b> (element + locators + a cropped image of each element), <b>Snip</b> a region and mark it up, <b>Record</b> a multi-screen action flow, or <b>Fix&nbsp;me</b> (report a problem with Nitpick itself) — then add a comment (typed or dictated) and Save.</p>
         </div></div>
       </div>
       <div class="col-md-4">
@@ -110,10 +110,10 @@
 <section id="which" class="py-5">
   <div class="container">
     <h2 class="fw-bold text-center mb-2">Which tool should I use?</h2>
-    <p class="text-center text-muted mb-5">Three capture tools, three jobs — pick by the kind of issue you're reporting.</p>
+    <p class="text-center text-muted mb-5">Pick by the kind of issue you're reporting.</p>
     <div class="row g-4">
 
-      <div class="col-md-4">
+      <div class="col-md-6 col-lg-3">
         <div class="card h-100 border-0 shadow-sm"><div class="card-body">
           <i class="bi bi-crosshair feature-ico"></i>
           <h5 class="mt-3">🎯 Inspect <span class="text-muted fw-normal">— a specific element</span></h5>
@@ -128,11 +128,11 @@
         </div></div>
       </div>
 
-      <div class="col-md-4">
+      <div class="col-md-6 col-lg-3">
         <div class="card h-100 border-0 shadow-sm"><div class="card-body">
           <i class="bi bi-crop feature-ico"></i>
           <h5 class="mt-3">✂️ Snip <span class="text-muted fw-normal">— a region or layout</span></h5>
-          <p class="text-muted mb-2">Drag a box around the area, then mark it up with arrow / circle / box / pen. Saved as one flat annotated image — captured correctly at any scroll position.</p>
+          <p class="text-muted mb-2">Drag a box around the area, then mark it up with arrow / line / circle / box / pen / text. Saved as one flat annotated image — captured correctly at any scroll position.</p>
           <p class="small text-uppercase text-muted fw-semibold mb-1">Ideal for</p>
           <ul class="text-muted small ps-3 mb-3">
             <li>Alignment / overlap / overflow / uneven spacing</li>
@@ -143,7 +143,7 @@
         </div></div>
       </div>
 
-      <div class="col-md-4">
+      <div class="col-md-6 col-lg-3">
         <div class="card h-100 border-0 shadow-sm"><div class="card-body">
           <i class="bi bi-record-circle feature-ico"></i>
           <h5 class="mt-3">🎬 Record <span class="text-muted fw-normal">— a bug that takes steps</span></h5>
@@ -158,10 +158,25 @@
         </div></div>
       </div>
 
+      <div class="col-md-6 col-lg-3">
+        <div class="card h-100 border-0 shadow-sm"><div class="card-body">
+          <i class="bi bi-tools feature-ico"></i>
+          <h5 class="mt-3">🛠 Fix me <span class="text-muted fw-normal">— Nitpick itself</span></h5>
+          <p class="text-muted mb-2">The overlay misbehaving? Type <b>or dictate</b> what's wrong. The report is flagged <code>meta</code> and the screenshot includes the Nitpick UI — so your agent fixes the tool, not your app.</p>
+          <p class="small text-uppercase text-muted fw-semibold mb-1">Ideal for</p>
+          <ul class="text-muted small ps-3 mb-3">
+            <li>Marquee won't drag / badge missing</li>
+            <li>Save fails or captures look wrong</li>
+            <li>Anything broken about the overlay</li>
+          </ul>
+          <span class="badge text-bg-light border">→ 001.png (overlay visible) + diagnostics</span>
+        </div></div>
+      </div>
+
     </div>
     <p class="text-center text-muted small mt-4 mb-0">
       <i class="bi bi-lightbulb text-np"></i>
-      Pair any tool with a <b>reference image</b> (paste/drop into the comment box) to show the look you want — and remember: <b>one element → Inspect</b> · <b>a layout/area → Snip</b> · <b>a sequence → Record</b>.
+      Pair any tool with a <b>reference image</b> (paste/drop into the comment box) to show the look you want — and remember: <b>one element → Inspect</b> · <b>a layout/area → Snip</b> · <b>a sequence → Record</b> · <b>Nitpick itself → Fix me</b>.
     </p>
   </div>
 </section>
@@ -239,7 +254,11 @@
 <span class="c"># mounts it in the root layout (all pages),</span>
 <span class="c"># gitignores .nitpick/, installs html-to-image</span>
 
-npm run dev   <span class="c"># (re)start the dev server</span></pre>
+npm run dev   <span class="c"># (re)start the dev server</span>
+
+/nitpick:sanity
+<span class="c"># optional: verify the install end-to-end</span>
+<span class="c"># (real browser; selection in all 4 corners)</span></pre>
           </div>
           <div class="col-lg-4">
             <h5><span class="step-num me-2">2</span>Usage</h5>
@@ -327,7 +346,8 @@ rm -rf .claude/skills/bmad-nitpick \
         <thead class="table-dark"><tr><th>Command</th><th>What it does</th><th>Mode</th></tr></thead>
         <tbody>
           <tr><td><code>/nitpick:setup</code></td><td>Scaffold the overlay + dev API route into a Next.js app (all pages).</td><td>Both</td></tr>
-          <tr><td><code>/nitpick:process</code></td><td>Fix the <code>.nitpick/</code> queue directly in Claude (defers to BMAD if detected).</td><td>Claude</td></tr>
+          <tr><td><code>/nitpick:sanity</code></td><td>Verify an install end-to-end: static checks + a real-browser test (four-corner selection, snip pipeline, hostile-CSS regression, Fix&nbsp;me &amp; API round-trips).</td><td>Both</td></tr>
+          <tr><td><code>/nitpick:process</code></td><td>Fix the <code>.nitpick/</code> queue directly in Claude (defers to BMAD if detected); <code>meta</code> ("Fix me") items fix the tool itself.</td><td>Claude</td></tr>
           <tr><td><code>/nitpick:bmad</code></td><td>Triage feedback &amp; route it: <code>triage</code> · <code>quick-fix &lt;id&gt;</code> · <code>backlog &lt;id&gt;</code> · <code>stories &lt;epic&gt;</code> · <code>status</code>.</td><td>BMAD</td></tr>
           <tr><td><code>/nitpick:setup-bmad</code></td><td>Install the BMAD-native Nitpick agent (v6 skill / v4 agent).</td><td>BMAD</td></tr>
           <tr><td><code>/nitpick:remove</code></td><td>Reverse setup: remove overlay, route, mount, <code>.nitpick/</code> &amp; dep.</td><td>Both</td></tr>

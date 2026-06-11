@@ -97,6 +97,7 @@ export async function POST(req: Request) {
     viewport: body.viewport ?? null,
     captureType: typeof body.captureType === 'string' ? body.captureType : null,
     coordSpace: typeof body.coordSpace === 'string' ? body.coordSpace : null,
+    meta: body.meta ?? null, // "Fix me" diagnostics — the report is about the Nitpick tool itself
     element: targets[0] ?? body.element ?? null,
     targets,
     targetImages,

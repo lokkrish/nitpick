@@ -39,6 +39,14 @@ correct code fix. (For how reports are produced and the full data contract, see 
       - **`snip` / `full`** — read `<id>.png` (the snipped region, or the viewport, with marks
         baked in).
       - **`recording`** — there is **no screenshot**; it's an action flow (read `actions`).
+      - **`meta`** ("Fix me") — the report is about **the Nitpick tool itself**, not the app.
+        `<id>.png` shows the viewport *including the Nitpick UI*, and `meta` carries tool
+        diagnostics (`version`, `userAgent`, `hotkey`). Skip steps (b)–(d) and instead fix the
+        **installed Nitpick copy** (the `nitpick/` components folder and/or the `api/nitpick`
+        route), using the plugin's templates (`${CLAUDE_PLUGIN_ROOT}/templates/nitpick/`) as the
+        reference — if `meta.version` lags the template, refreshing the stale copy usually IS
+        the fix. If the bug exists in the template too, fix the local copy and tell the user to
+        report it upstream. Never route meta items to BMAD.
       In all cases read `<id>-ref.png` if present — that's the user's target look.
    b. **Locate the code.** A report may reference several elements (`targets[]`) or none
       (a free-form visual/region note). For each entry in `targets` (fall back to `element` =

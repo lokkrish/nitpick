@@ -9,10 +9,14 @@
  *                AND a cropped screenshot of that element (saved as <id>-1.png, <id>-2.png, … for
  *                the 1st, 2nd, … element). Stays active for multi-select.
  *   • Snip     — drag a region; we capture exactly that region (at any scroll position), then you
- *                mark it up on the cropped image (Arrow / Circle / Box / Pen). Saved as a flat
- *                image + comment (drawings baked into the image — no coordinates are stored).
+ *                mark it up on the cropped image (Arrow / Line / Circle / Box / Pen / Text). Saved
+ *                as a flat image + comment (markup baked into the image — no coordinates stored).
  *   • Record   — hide the overlay and log clicks / inputs / dropdowns / radios / navigation in
  *                the background, across screens. Records the ACTION FLOW only (no screenshots).
+ *   • Fix me   — report a problem with Nitpick ITSELF. Saved as captureType "meta" with the
+ *                Nitpick UI visible in the screenshot + tool diagnostics, so the user's agent
+ *                fixes the tool rather than the app. Comment can be typed or dictated (Web
+ *                Speech, where the browser supports it).
  * Add a comment / reference image, then Save → POST to /api/nitpick → `.nitpick/`.
  *
  * Self-contained: only React + ./nitpick-source. Screenshots are best-effort via an optional
@@ -26,6 +30,7 @@ import { resolveElementInfo, type ElementInfo } from './nitpick-source';
 const ACCENT = '#ff2d55';
 const Z = 2147483600;
 const ENDPOINT = '/api/nitpick';
+const NITPICK_VERSION = '0.4.0'; // keep in sync with plugin.json (CI checks this)
 
 // ----------------------------------------------------------------- hotkey
 
@@ -50,14 +55,16 @@ function hotkeyLabel(h: Hotkey): string {
 
 // ----------------------------------------------------------------- types
 
-type DrawTool = 'arrow' | 'circle' | 'box' | 'pen';
+type DrawTool = 'arrow' | 'line' | 'circle' | 'box' | 'pen' | 'text';
 type Tool = null | 'inspect' | 'snip';
 
 type Shape =
   | { type: 'arrow'; x1: number; y1: number; x2: number; y2: number }
+  | { type: 'line'; x1: number; y1: number; x2: number; y2: number }
   | { type: 'pen'; pts: [number, number][] }
   | { type: 'rect'; x: number; y: number; w: number; h: number }
-  | { type: 'ellipse'; cx: number; cy: number; rx: number; ry: number };
+  | { type: 'ellipse'; cx: number; cy: number; rx: number; ry: number }
+  | { type: 'text'; x: number; y: number; text: string };
 
 interface Box { x: number; y: number; w: number; h: number }
 interface Snip { url: string; w: number; h: number; scale: number; box: Box }
@@ -169,13 +176,20 @@ function rectShape(s: Pt, p: Pt): Shape {
 }
 function snipShape(tool: DrawTool, s: Pt, p: Pt): Shape {
   if (tool === 'arrow') return { type: 'arrow', x1: s.x, y1: s.y, x2: p.x, y2: p.y };
+  if (tool === 'line') return { type: 'line', x1: s.x, y1: s.y, x2: p.x, y2: p.y };
   if (tool === 'circle') return { type: 'ellipse', cx: (s.x + p.x) / 2, cy: (s.y + p.y) / 2, rx: Math.abs(p.x - s.x) / 2, ry: Math.abs(p.y - s.y) / 2 };
   return rectShape(s, p); // box
 }
+// Text size tied to stroke width so it scales with the snip the same way in the live SVG
+// preview (renderSnipShape) and the baked canvas (drawShapes).
+const textSize = (sw: number) => sw * 5;
 
 // ----------------------------------------------------------------- screenshot
 
 const nitpickFilter = (n: any) => !(n && n.dataset && n.dataset.nitpickUi);
+// For "Fix me" (meta) reports the Nitpick UI is the subject, so it stays IN the shot — only the
+// transient "Capturing…" curtain is excluded, since it would cover the whole capture.
+const capturingFilter = (n: any) => !(n && n.dataset && 'nitpickCapturing' in n.dataset);
 
 function loadImg(src: string): Promise<HTMLImageElement> {
   return new Promise((res, rej) => { const img = new Image(); img.onload = () => res(img); img.onerror = rej; img.src = src; });
@@ -190,7 +204,13 @@ function drawShapes(ctx: CanvasRenderingContext2D, shapes: Shape[], dpr: number,
     ctx.beginPath();
     if (s.type === 'rect') ctx.strokeRect(X(s.x), Y(s.y), s.w * dpr, s.h * dpr);
     else if (s.type === 'ellipse') { ctx.ellipse(X(s.cx), Y(s.cy), Math.abs(s.rx) * dpr, Math.abs(s.ry) * dpr, 0, 0, Math.PI * 2); ctx.stroke(); }
+    else if (s.type === 'line') { ctx.moveTo(X(s.x1), Y(s.y1)); ctx.lineTo(X(s.x2), Y(s.y2)); ctx.stroke(); }
     else if (s.type === 'pen') { s.pts.forEach(([px, py], i) => (i ? ctx.lineTo(X(px), Y(py)) : ctx.moveTo(X(px), Y(py)))); ctx.stroke(); }
+    else if (s.type === 'text') {
+      const fs = textSize(ctx.lineWidth);
+      ctx.font = `700 ${fs}px ui-sans-serif, system-ui, sans-serif`; ctx.textBaseline = 'top';
+      s.text.split('\n').forEach((line, i) => ctx.fillText(line, X(s.x), Y(s.y) + i * fs * 1.25));
+    }
     else if (s.type === 'arrow') {
       ctx.moveTo(X(s.x1), Y(s.y1)); ctx.lineTo(X(s.x2), Y(s.y2)); ctx.stroke();
       const ang = Math.atan2(s.y2 - s.y1, s.x2 - s.x1); const head = ctx.lineWidth * 4;
@@ -217,22 +237,22 @@ function pageBackground(): string {
 // of the region and shift the cloned document up/left by the region's origin, so exactly
 // [x, y, w, h] of the page lands in the frame. The frame is a bounded region (never the whole long
 // page), so it always stays within the browser's max-canvas size. Returns the data URL + ratio.
-async function captureRegion(box: Box): Promise<{ url: string; pr: number } | null> {
+async function captureRegion(box: Box, includeUi = false): Promise<{ url: string; pr: number } | null> {
   const mod: any = await import('html-to-image').catch(() => null);
   if (!mod || !mod.toPng) return null;
   const pr = Math.min(window.devicePixelRatio || 1, 2);
   const w = Math.max(1, Math.round(box.w)); const h = Math.max(1, Math.round(box.h));
   try {
     const url: string = await mod.toPng(document.documentElement, {
-      width: w, height: h, pixelRatio: pr, cacheBust: true, backgroundColor: pageBackground(), filter: nitpickFilter,
+      width: w, height: h, pixelRatio: pr, cacheBust: true, backgroundColor: pageBackground(), filter: includeUi ? capturingFilter : nitpickFilter,
       style: { margin: '0', transform: `translate(${-box.x}px, ${-box.y}px)`, transformOrigin: 'top left' },
     });
     return { url, pr };
   } catch { return null; }
 }
 // Capture exactly the viewport the user is looking at (a context shot for comment-only reports).
-async function captureViewport(): Promise<string | null> {
-  const cap = await captureRegion({ x: window.scrollX, y: window.scrollY, w: window.innerWidth, h: window.innerHeight });
+async function captureViewport(includeUi = false): Promise<string | null> {
+  const cap = await captureRegion({ x: window.scrollX, y: window.scrollY, w: window.innerWidth, h: window.innerHeight }, includeUi);
   return cap ? cap.url : null;
 }
 // One cropped screenshot per Inspected element (a little padding for context). Saved as
@@ -271,12 +291,15 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
   const [active, setActive] = useState(false);
   const [recording, setRecording] = useState(false);
   const [tool, setTool] = useState<Tool>(null);
+  const [metaMode, setMetaMode] = useState(false); // "Fix me" — the report is about Nitpick itself
+  const [listening, setListening] = useState(false); // dictation (Web Speech, when available)
   const [drawTool, setDrawTool] = useState<DrawTool>('arrow'); // active sub-tool inside the Snip editor
   const [marquee, setMarquee] = useState<Shape | null>(null);  // in-progress snip selection (page coords)
   const [targets, setTargets] = useState<Target[]>([]);
   const [snip, setSnip] = useState<Snip | null>(null); // snip editor open when set
   const [snipShapes, setSnipShapes] = useState<Shape[]>([]); // baked into image, never persisted as coords
   const [snipDraft, setSnipDraft] = useState<Shape | null>(null);
+  const [snipText, setSnipText] = useState<{ x: number; y: number; value: string } | null>(null); // open text box (image-local coords)
   const [capturing, setCapturing] = useState(false); // a screenshot is in flight
   const [actions, setActions] = useState<Action[]>([]);
   const [hovered, setHovered] = useState<DOMRect | null>(null);
@@ -289,9 +312,12 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
 
   const drawStart = useRef<Pt | null>(null);
   const snipStart = useRef<Pt | null>(null);
+  const snipTextRef = useRef<typeof snipText>(null); // mirror for the global Escape handler
+  snipTextRef.current = snipText;
   const dragOff = useRef<Pt | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastUrlRef = useRef('');
+  const recogRef = useRef<any>(null);
 
   const showToast = useCallback((m: string) => {
     setToast(m);
@@ -299,15 +325,20 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
     toastTimer.current = setTimeout(() => setToast(null), 3000);
   }, []);
 
-  const close = useCallback(() => {
-    setActive(false); setRecording(false); setTool(null); setMarquee(null);
-    setTargets([]); setSnip(null); setSnipShapes([]); setSnipDraft(null);
-    setCapturing(false); setActions([]); setHovered(null); setComment(''); setReferenceImage(null); setSubmitting(false);
-    drawStart.current = null; snipStart.current = null;
+  const stopMic = useCallback(() => {
+    try { recogRef.current?.stop(); } catch { /* ignore */ }
+    recogRef.current = null; setListening(false);
   }, []);
 
+  const close = useCallback(() => {
+    setActive(false); setRecording(false); setTool(null); setMetaMode(false); setMarquee(null);
+    setTargets([]); setSnip(null); setSnipShapes([]); setSnipDraft(null); setSnipText(null);
+    setCapturing(false); setActions([]); setHovered(null); setComment(''); setReferenceImage(null); setSubmitting(false);
+    drawStart.current = null; snipStart.current = null; stopMic();
+  }, [stopMic]);
+
   const openTools = useCallback(() => {
-    setActive(true); setRecording(false); setTool(null); setSubmitting(false);
+    setActive(true); setRecording(false); setTool(null); setMetaMode(false); setSubmitting(false);
     setActions([]); setTargets([]); setSnip(null); setSnipShapes([]); setMarquee(null);
     if (typeof window !== 'undefined') { setScroll({ x: window.scrollX, y: window.scrollY }); setPos({ x: Math.max(8, (window.innerWidth - 480) / 2), y: 14 }); }
   }, []);
@@ -329,7 +360,8 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
       if (e.key === 'Escape' && active) {
         e.preventDefault();
         if (recording) setRecording(false);
-        else if (snip) { setSnip(null); setSnipShapes([]); setSnipDraft(null); }
+        else if (snip && snipTextRef.current) setSnipText(null); // just dismiss the open text box
+        else if (snip) { setSnip(null); setSnipShapes([]); setSnipDraft(null); setSnipText(null); }
         else close();
         return;
       }
@@ -469,7 +501,16 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
     const r = (e.currentTarget as Element).getBoundingClientRect(); const sc = snip ? snip.scale : 1;
     return { x: (e.clientX - r.left) / sc, y: (e.clientY - r.top) / sc };
   };
+  const commitSnipText = () => {
+    const t = snipText; setSnipText(null);
+    if (t && t.value.trim()) setSnipShapes((a) => [...a, { type: 'text', x: t.x, y: t.y, text: t.value.trim() }]);
+  };
   const onSnipDown = (e: React.PointerEvent) => {
+    if (drawTool === 'text') {
+      // an open text box commits via its blur (fired by this same press) — only place a new one if none is open
+      if (!snipText) setSnipText({ ...snipPt(e), value: '' });
+      return;
+    }
     (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
     const p = snipPt(e); snipStart.current = p;
     setSnipDraft(drawTool === 'pen' ? { type: 'pen', pts: [[p.x, p.y]] } : snipShape(drawTool, p, p));
@@ -487,19 +528,41 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
     if (actions.length) return setActions((a) => a.slice(0, -1));
   };
 
-  const pickTool = (t: Tool) => setTool((cur) => (cur === t ? null : t));
+  const pickTool = (t: Tool) => { setMetaMode(false); setTool((cur) => (cur === t ? null : t)); };
+
+  // "Fix me" — dictate or type what's wrong with Nitpick itself. Web Speech is feature-detected;
+  // the mic button only renders where the API exists (Chrome/Edge). Transcripts append to the
+  // comment so dictation and typing mix freely.
+  const SpeechRec: any = typeof window !== 'undefined' ? ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition) : null;
+  const toggleMic = () => {
+    if (listening) { stopMic(); return; }
+    try {
+      const rec = new SpeechRec();
+      rec.continuous = true; rec.interimResults = false; rec.lang = navigator.language || 'en-US';
+      rec.onresult = (e: any) => {
+        let text = '';
+        for (let i = e.resultIndex; i < e.results.length; i++) if (e.results[i].isFinal) text += e.results[i][0].transcript;
+        if (text.trim()) setComment((c) => (c ? c.replace(/\s+$/, '') + ' ' : '') + text.trim());
+      };
+      rec.onend = () => setListening(false);
+      rec.onerror = () => setListening(false);
+      recogRef.current = rec; rec.start(); setListening(true);
+    } catch { stopMic(); }
+  };
 
   const submit = useCallback(async () => {
     if (submitting) return;
     setSubmitting(true); setCapturing(true);
     try {
-      const isSnip = !!snip;
-      const liveActions = actions;
+      const isMeta = metaMode; // "Fix me" — the report is about Nitpick itself, not the app
+      const isSnip = !isMeta && !!snip;
+      const liveActions = isMeta ? [] : actions;
       const isRecording = !isSnip && liveActions.length > 0;
-      const reportTargets = isSnip ? [] : targets;
+      const reportTargets = isSnip || isMeta ? [] : targets;
       let screenshot: string | null = null;
       let targetImages: (string | null)[] = [];
-      if (isSnip && snip) screenshot = await withTimeout(flattenSnip(snip.url, snipShapes), 8000, snip.url);
+      if (isMeta) screenshot = await withTimeout(captureViewport(true), 8000, null); // WITH the Nitpick UI — it's the subject
+      else if (isSnip && snip) screenshot = await withTimeout(flattenSnip(snip.url, snipShapes), 8000, snip.url);
       else if (reportTargets.length) targetImages = await withTimeout(captureElementImages(reportTargets), 12000, []);
       else if (!isRecording) screenshot = await withTimeout(captureViewport(), 8000, null);
       // recording → action flow only, no screenshot
@@ -507,7 +570,7 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
         comment,
         route: window.location.pathname + window.location.search,
         viewport: { width: window.innerWidth, height: window.innerHeight, dpr: window.devicePixelRatio || 1, scrollX: window.scrollX, scrollY: window.scrollY },
-        captureType: isSnip ? 'snip' : isRecording ? 'recording' : reportTargets.length ? 'element' : 'full',
+        captureType: isMeta ? 'meta' : isSnip ? 'snip' : isRecording ? 'recording' : reportTargets.length ? 'element' : 'full',
         coordSpace: isSnip ? null : 'page',
         annotations: [], // snip drawings are baked into the image; no page-level vector annotations
         targets: reportTargets,
@@ -515,13 +578,15 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
         element: reportTargets[0] ?? null,
         actions: liveActions,
         screenshot, referenceImage,
+        // diagnostics for fixing the tool (only on meta reports; older routes drop this field harmlessly)
+        meta: isMeta ? { tool: 'nitpick', version: NITPICK_VERSION, userAgent: navigator.userAgent, hotkey: hotkeyLabel(hotkey) } : null,
       };
       const res = await fetch(ENDPOINT, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) });
       const data = await res.json().catch(() => ({}));
       if (res.ok) { showToast(`📍 Saved feedback #${data.id ?? ''}`); close(); }
       else showToast(`Save failed (${res.status})`);
     } catch { showToast('Save failed — is the dev server running?'); } finally { setSubmitting(false); setCapturing(false); }
-  }, [submitting, snip, snipShapes, comment, targets, actions, referenceImage, close, showToast]);
+  }, [submitting, metaMode, snip, snipShapes, comment, targets, actions, referenceImage, hotkey, close, showToast]);
 
   if (!mounted) return null;
 
@@ -551,8 +616,12 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
         <>
           {/* selection / highlight surface */}
           {!snip && (
-            <svg data-nitpick-ui width="100%" height="100%"
-              style={{ position: 'fixed', inset: 0, pointerEvents: snipMarqueeActive ? 'auto' : 'none', cursor: snipMarqueeActive ? 'crosshair' : 'default' }}
+            /* Size via inline CSS, not width/height attributes: host resets like
+               `svg { max-width: 100%; height: auto }` override SVG presentation attributes and
+               would collapse this layer to the 150px intrinsic default (Snip then only works in
+               the top strip of the viewport). Inline styles win over any host stylesheet. */
+            <svg data-nitpick-ui
+              style={{ position: 'fixed', inset: 0, width: '100%', height: '100%', maxWidth: 'none', pointerEvents: snipMarqueeActive ? 'auto' : 'none', cursor: snipMarqueeActive ? 'crosshair' : 'default' }}
               onPointerDown={onPageDown} onPointerMove={onPageMove} onPointerUp={onPageUp}>
               <g transform={`translate(${-scroll.x},${-scroll.y})`}>
                 {targets.map((t, i) => (
@@ -578,22 +647,39 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
               <div style={{ background: '#1a1a1e', padding: 10, borderRadius: 12, boxShadow: '0 12px 40px rgba(0,0,0,0.6)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
                   <span style={{ color: '#fff', fontSize: 12, fontWeight: 700, marginRight: 'auto' }}>✂ Snip — draw on it, then Save</span>
-                  {(['arrow', 'circle', 'box', 'pen'] as DrawTool[]).map((t) => (
+                  {(['arrow', 'line', 'circle', 'box', 'pen', 'text'] as DrawTool[]).map((t) => (
                     <button key={t} onClick={() => setDrawTool(t)} style={toolBtn(drawTool === t)}>{drawIcon(t)}</button>
                   ))}
                   <button onClick={() => setSnipShapes((a) => a.slice(0, -1))} disabled={!snipShapes.length} style={toolBtn(false)}>↩</button>
-                  <button onClick={() => { setSnip(null); setSnipShapes([]); setSnipDraft(null); }} title="Discard snip" style={toolBtn(false)}>✕</button>
+                  <button onClick={() => { setSnip(null); setSnipShapes([]); setSnipDraft(null); setSnipText(null); }} title="Discard snip" style={toolBtn(false)}>✕</button>
                 </div>
                 <div style={{ position: 'relative', width: snip.w * snip.scale, height: snip.h * snip.scale }}>
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img src={snip.url} alt="snip" style={{ width: snip.w * snip.scale, height: snip.h * snip.scale, display: 'block', borderRadius: 6 }} />
-                  <svg viewBox={`0 0 ${snip.w} ${snip.h}`} width={snip.w * snip.scale} height={snip.h * snip.scale}
-                    style={{ position: 'absolute', inset: 0, cursor: 'crosshair' }}
+                  {/* width/height as inline CSS (not attributes) — see the marquee svg above */}
+                  <svg viewBox={`0 0 ${snip.w} ${snip.h}`}
+                    style={{ position: 'absolute', inset: 0, width: snip.w * snip.scale, height: snip.h * snip.scale, maxWidth: 'none', cursor: drawTool === 'text' ? 'text' : 'crosshair' }}
                     onPointerDown={onSnipDown} onPointerMove={onSnipMove} onPointerUp={onSnipUp}>
                     <defs><marker id="np-arrow-snip" markerWidth="10" markerHeight="10" refX="7" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L7,3 L0,6 Z" fill={ACCENT} /></marker></defs>
                     {snipShapes.map((s, i) => renderSnipShape(s, i, snipSw))}
                     {snipDraft && renderSnipShape(snipDraft, -1, snipSw)}
                   </svg>
+                  {snipText && (
+                    <textarea autoFocus value={snipText.value} placeholder="type, Enter to place"
+                      onChange={(e) => setSnipText({ ...snipText, value: e.target.value })}
+                      onBlur={commitSnipText}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); commitSnipText(); }
+                        if (e.key === 'Escape') e.stopPropagation(); // global handler dismisses just the text box
+                      }}
+                      style={{
+                        position: 'absolute', left: snipText.x * snip.scale, top: snipText.y * snip.scale,
+                        minWidth: 120, minHeight: textSize(snipSw) * snip.scale * 1.6, resize: 'both',
+                        font: `700 ${textSize(snipSw) * snip.scale}px ui-sans-serif, system-ui, sans-serif`,
+                        color: ACCENT, background: 'rgba(10,10,14,0.35)', caretColor: ACCENT,
+                        border: `1px dashed ${ACCENT}`, borderRadius: 4, padding: 0, outline: 'none', overflow: 'hidden',
+                      }} />
+                  )}
                 </div>
               </div>
             </div>
@@ -609,7 +695,8 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
                 style={{ cursor: 'grab', userSelect: 'none', fontSize: 16, opacity: 0.7, padding: '0 4px' }}>⠿</span>
               <button onClick={() => pickTool('inspect')} style={toolBtn(tool === 'inspect')}>⌖ Inspect</button>
               <button onClick={() => pickTool('snip')} style={toolBtn(tool === 'snip')}>✂ Snip</button>
-              <button onClick={() => setRecording(true)} title="Record clicks / inputs / navigation across screens (action flow only)" style={toolBtn(false)}>● Record</button>
+              <button onClick={() => { setMetaMode(false); setRecording(true); }} title="Record clicks / inputs / navigation across screens (action flow only)" style={toolBtn(false)}>● Record</button>
+              <button onClick={() => { setTool(null); setMetaMode((m) => !m); }} title="Something wrong with Nitpick itself? Describe it and Save — your agent will fix the tool" style={toolBtn(metaMode)}>🛠 Fix me</button>
               <button onClick={undo} title="Undo" style={{ ...toolBtn(false), marginLeft: 'auto' }}>↩</button>
               <button onClick={close} title="Close (Esc)" style={toolBtn(false)}>✕</button>
             </div>
@@ -617,9 +704,16 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
               onDragOver={(e) => e.preventDefault()}
               onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f && f.type.startsWith('image/')) readImage(f); }}>
               <textarea value={comment} onChange={(e) => setComment(e.target.value)}
-                placeholder="What's wrong? Pick a tool above (Inspect / Snip / Record), then Save."
-                style={{ flex: 1, minHeight: 52, resize: 'vertical', borderRadius: 8, border: '1px solid #3a3a40', background: '#1a1a1e', color: '#fff', padding: 8, fontSize: 12, boxSizing: 'border-box', outline: 'none' }} />
+                placeholder={metaMode
+                  ? "What's wrong with Nitpick? Type or dictate it — Save hands it to your agent to fix the tool."
+                  : "What's wrong? Pick a tool above (Inspect / Snip / Record), then Save."}
+                style={{ flex: 1, minHeight: 52, resize: 'vertical', borderRadius: 8, border: `1px solid ${metaMode ? ACCENT : '#3a3a40'}`, background: '#1a1a1e', color: '#fff', padding: 8, fontSize: 12, boxSizing: 'border-box', outline: 'none' }} />
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6, width: 128 }}>
+                {SpeechRec ? (
+                  <button onClick={toggleMic} title={listening ? 'Stop dictating' : 'Dictate your comment'} style={{ ...toolBtn(listening), textAlign: 'center' }}>
+                    {listening ? '🎤 listening…' : '🎤 dictate'}
+                  </button>
+                ) : null}
                 {referenceImage ? (
                   <div style={{ position: 'relative' }}>
                     {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -645,9 +739,10 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
               </div>
             ) : (
               <div style={{ padding: '0 10px 8px', fontSize: 10, opacity: 0.6 }}>
-                {tool === 'inspect' ? `${targets.length} element${targets.length === 1 ? '' : 's'} selected — each saved as its own image`
-                  : tool === 'snip' ? 'drag a region to snip'
-                    : 'pick a tool, or just type a comment'}
+                {metaMode ? '🛠 reporting a Nitpick problem — the screenshot will include the Nitpick UI'
+                  : tool === 'inspect' ? `${targets.length} element${targets.length === 1 ? '' : 's'} selected — each saved as its own image`
+                    : tool === 'snip' ? 'drag a region to snip'
+                      : 'pick a tool, or just type a comment'}
               </div>
             )}
           </div>
@@ -656,7 +751,7 @@ function NitpickOverlayInner({ hotkey }: { hotkey: Hotkey }) {
 
       {/* shown while a screenshot is being produced (excluded from the capture itself) */}
       {capturing && (
-        <div data-nitpick-ui style={{ position: 'fixed', inset: 0, zIndex: Z + 10, background: 'rgba(10,10,14,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'auto', color: '#fff', fontSize: 13, fontWeight: 600, letterSpacing: 0.3 }}>
+        <div data-nitpick-ui data-nitpick-capturing="" style={{ position: 'fixed', inset: 0, zIndex: Z + 10, background: 'rgba(10,10,14,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'auto', color: '#fff', fontSize: 13, fontWeight: 600, letterSpacing: 0.3 }}>
           📸 Capturing…
         </div>
       )}
@@ -674,10 +769,19 @@ function renderSnipShape(s: Shape, key: number, sw: number) {
   if (s.type === 'rect') return <rect key={key} x={s.x} y={s.y} width={s.w} height={s.h} fill="none" stroke={ACCENT} strokeWidth={sw} />;
   if (s.type === 'ellipse') return <ellipse key={key} cx={s.cx} cy={s.cy} rx={Math.abs(s.rx)} ry={Math.abs(s.ry)} fill="none" stroke={ACCENT} strokeWidth={sw} />;
   if (s.type === 'arrow') return <line key={key} x1={s.x1} y1={s.y1} x2={s.x2} y2={s.y2} stroke={ACCENT} strokeWidth={sw} markerEnd="url(#np-arrow-snip)" />;
+  if (s.type === 'line') return <line key={key} x1={s.x1} y1={s.y1} x2={s.x2} y2={s.y2} stroke={ACCENT} strokeWidth={sw} strokeLinecap="round" />;
+  if (s.type === 'text') {
+    const fs = textSize(sw);
+    return (
+      <text key={key} x={s.x} y={s.y} fill={ACCENT} fontSize={fs} fontWeight={700} fontFamily="ui-sans-serif, system-ui, sans-serif" dominantBaseline="hanging">
+        {s.text.split('\n').map((line, i) => <tspan key={i} x={s.x} dy={i ? fs * 1.25 : 0}>{line}</tspan>)}
+      </text>
+    );
+  }
   return <path key={key} d={s.pts.map(([x, y], i) => `${i ? 'L' : 'M'}${x},${y}`).join(' ')} fill="none" stroke={ACCENT} strokeWidth={sw} strokeLinejoin="round" strokeLinecap="round" />;
 }
 function drawIcon(t: DrawTool): string {
-  return t === 'arrow' ? '↗ Arrow' : t === 'circle' ? '◯ Circle' : t === 'box' ? '▭ Box' : '✎ Pen';
+  return t === 'arrow' ? '↗ Arrow' : t === 'line' ? '╱ Line' : t === 'circle' ? '◯ Circle' : t === 'box' ? '▭ Box' : t === 'pen' ? '✎ Pen' : 'T Text';
 }
 function toolBtn(active: boolean): React.CSSProperties {
   return { fontSize: 11, fontWeight: 600, padding: '5px 8px', borderRadius: 7, cursor: 'pointer', border: `1px solid ${active ? ACCENT : '#3a3a40'}`, background: active ? 'rgba(255,45,85,0.20)' : '#1a1a1e', color: '#fff', whiteSpace: 'nowrap' };

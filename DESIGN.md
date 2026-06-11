@@ -78,7 +78,7 @@ This is the interface between browser and agent — keep it stable.
   "comment": "Padding too tight; button overflows on mobile",
   "route": "/dashboard",
   "viewport": { "width": 390, "height": 844, "dpr": 2, "scrollX": 0, "scrollY": 120 },
-  "captureType": "element" | "snip" | "recording" | "full", // how the report was made
+  "captureType": "element" | "snip" | "recording" | "full" | "meta", // how the report was made
   "coordSpace": "page",                   // boxes are PAGE coords (incl. scroll)
   // `targets` = every element the user Inspected (0..n). `element` = targets[0] (back-compat).
   "targets": [
@@ -112,18 +112,32 @@ This is the interface between browser and agent — keep it stable.
     { "type": "navigate", "at": "...", "url": "/about" },
     { "type": "input", "at": "...", "url": "/about", "locator": { "getBy": "getByRole('textbox', { name: \"Email\" })" }, "value": "a@b.com" }
   ],
-  "screenshot": "001.png",                // snip/full reports; null for element & recording reports
-  "referenceImage": "001-ref.png"         // optional, user-supplied
+  "screenshot": "001.png",                // snip/full/meta reports; null for element & recording reports
+  "referenceImage": "001-ref.png",        // optional, user-supplied
+  // "Fix me" reports only — diagnostics for fixing the TOOL (null otherwise)
+  "meta": { "tool": "nitpick", "version": "0.4.0", "userAgent": "…", "hotkey": "Ctrl+Shift+." }
 }
 ```
 
 `.nitpick/queue.json` is the index: `{ "items": [{ "id", "status", "comment", "route" }], "nextId": 4 }`.
 
-**Tools (v0.3.3):** the toolbox is **Inspect**, **Snip**, and **Record** — there is no longer a
-standalone Draw tool (drawing lives inside the Snip editor, where it's most useful). `targets` is
-a list because a report can reference zero or many Inspected elements; a report with
+**Tools (v0.4.0):** the toolbox is **Inspect**, **Snip**, **Record**, and **Fix me** — there is
+no longer a standalone Draw tool (drawing lives inside the Snip editor, where it's most useful).
+`targets` is a list because a report can reference zero or many Inspected elements; a report with
 `targets: []` is a pure visual/region note. `element` stays as a `targets[0]` alias for backward
 compatibility.
+
+**Fix me — meta reports (v0.4.0):** feedback about **Nitpick itself** flows through the same
+queue, flagged `captureType: "meta"`. Two deliberate inversions: the screenshot **includes the
+Nitpick UI** (every other capture excludes it via the `data-nitpick-ui` filter — for a tool bug
+the overlay *is* the subject; only the transient "Capturing…" curtain is filtered), and the
+`meta` field carries tool diagnostics (`version` from the overlay's `NITPICK_VERSION` constant —
+CI keeps it in sync with plugin.json — plus `userAgent` and the configured `hotkey`). The
+comment can be typed or **dictated** (Web Speech, feature-detected; mic button only renders
+where the API exists). On the agent side, `/nitpick:process` and the skill treat meta items as
+tool bugs: fix the **installed Nitpick copy** against the plugin templates (version drift →
+refresh the stale copy), never route them to BMAD. Older installed routes that predate the
+`meta` field drop it harmlessly — `captureType` still survives, so the flow degrades gracefully.
 
 **Per-element images (v0.3.3):** **Inspect** now saves a **cropped screenshot of each selected
 element** — `<id>-1.png` for the 1st element, `<id>-2.png` for the 2nd, and so on (also surfaced
@@ -146,10 +160,12 @@ below), bloated reports, and were a memory-pressure source. A recording now save
 ordered `actions` — which already pinpoint *what* the user did and *where* (route + locator).
 Use **Snip** or **Inspect** when a picture is needed.
 
-**Snip (v2.2):** **Snip** crops a region and lets the user draw on the cropped image; those
-drawings are **baked into the image** (no coordinates stored) and saved as the screenshot. A snip
-is always image + comment only (`targets: []`). When the LLM needs DOM/component details for an
-element, use **Inspect** (which captures `targets[]` with Playwright-style locators).
+**Snip (v2.2, markup expanded in v0.4.0):** **Snip** crops a region and lets the user mark up
+the cropped image — **Arrow / Line / Circle / Box / Pen / Text** (Text places a textarea at the
+click point; Enter/blur commits, Esc cancels). All markup is **baked into the image** (no
+coordinates stored) and saved as the screenshot. A snip is always image + comment only
+(`targets: []`). When the LLM needs DOM/component details for an element, use **Inspect** (which
+captures `targets[]` with Playwright-style locators).
 
 > The old **＋ Elements** toggle on Draw/Snip was removed in v0.3.1 — it sampled elements under a
 > mark, which was unreliable, and **Inspect** already covers that need precisely.
@@ -198,6 +214,36 @@ its comment + metadata (and, for Inspect, full element targets) and stays action
 A native HD path (`navigator.mediaDevices.getDisplayMedia`) would give pixel-perfect captures
 (and fix `html-to-image`'s blank-`next/image` quirk) at the cost of a per-use permission prompt
 — tracked as a future toggle, not the default.
+
+## Overlay styling — survive arbitrary host CSS (v0.4.0)
+
+The overlay is portaled into `document.body` of an app whose stylesheets we don't control, so it
+**cannot assume a neutral cascade**. The field bug that forced this rule: a common reset
+(`img, svg, video { max-width: 100%; height: auto }`) collapsed the Snip capture layer to the
+SVG intrinsic default (300×150) because the layer was sized with `width`/`height` **presentation
+attributes**, which lose to *any* stylesheet rule — Snip only worked in the top 150px of the
+viewport. The invariant:
+
+- **Dimension-critical overlay elements are sized with inline styles only** (`width`/`height`/
+  `maxWidth: 'none'` in `style={}`) — inline styles beat every host stylesheet. Never use SVG
+  width/height presentation attributes.
+- CI enforces this (`scripts/validate.mjs` fails on `<svg …width=`/`height=` and on a missing
+  `maxWidth: 'none'`), and `/nitpick:sanity` tests it live by injecting that exact hostile reset
+  and re-checking geometry, corner hits, and the snip pipeline.
+
+## Verification — `/nitpick:sanity`
+
+Setup can silently go wrong (stale overlay copy, wrong route path, hostile host CSS), so the
+plugin ships its own end-to-end check. `/nitpick:sanity` runs static integrity checks (files,
+mount, route path, dev-only gates, drift vs the plugin templates), then drives a real Chromium
+(Playwright, resolved from the user's project) through
+`templates/nitpick/sanity.mjs`: activation, **full-viewport capture-layer geometry**, marquee
+drags in **all four corners**, the complete snip pipeline (capture → editor → draw → Esc), the
+same checks under the injected hostile reset above, Esc deactivation, the **Fix me** meta
+round-trip, and an `/api/nitpick` save round-trip. Every probe report it creates is deleted
+afterwards — the suite leaves no feedback behind. The DOM hooks it drives the overlay through
+(`data-nitpick-ui="root"`, the badge title, `alt="snip"`, the marquee dasharray, the Fix me
+button) are part of the overlay's contract and CI-checked.
 
 ## Safety / scope rules
 

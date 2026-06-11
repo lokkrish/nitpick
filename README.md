@@ -51,11 +51,13 @@ Playwright-style locators, and a screenshot. Reporting and fixing stay cleanly s
 - 🎯 **Inspect → source** — click any element to capture its **React source line**, component
   stack, computed styles, **Playwright-style locators** (`getByRole`, `getByTestId`, CSS, XPath),
   **and a cropped screenshot of each selected element** (`<id>-1.png`, `<id>-2.png`, …).
-- ✂️ **Snip** — crop a region (correct at any scroll), mark it up with Arrow / Circle / Box / Pen,
-  save it as a flat annotated image.
+- ✂️ **Snip** — crop a region (correct at any scroll), mark it up with Arrow / Line / Circle / Box /
+  Pen / Text, save it as a flat annotated image.
 - 🎬 **Record a flow** — capture clicks, field inputs (text / dropdown / radio / checkbox), and
   **navigation across multiple screens** as an ordered repro script (each step with its route and
   a Playwright-style locator).
+- 🛠 **Fix me** — report a problem with **Nitpick itself** (typed or dictated); the agent fixes
+  the tool, not your app.
 - 🧰 **Draggable toolbox**, configurable hotkey (or double-tap Shift, or a click).
 - 🤝 **BMAD-METHOD aware** — route feedback to the dev agent now, or into stories after an epic.
 - 🔒 **Dev-only & report-only** — never runs in production, never changes your app's behavior;
@@ -63,13 +65,14 @@ Playwright-style locators, and a screenshot. Reporting and fixing stay cleanly s
 
 ## 🧭 Which tool should I use?
 
-Three capture tools, three jobs. Pick by **what kind of issue** you're reporting:
+Pick by **what kind of issue** you're reporting:
 
 | Tool | Reach for it when the problem is… | Ideal cases | Saves |
 | --- | --- | --- | --- |
 | 🎯 **Inspect** | **a specific element** | Wrong color / size / spacing / font / copy on a known component; a missing or broken state; anytime you want Claude to land on the **exact source line + styles**. Click several elements — each is captured with its own locators **and image**. | `001-1.png`, `001-2.png`, … + element metadata |
 | ✂️ **Snip** | **a region, or how things relate** | Alignment / overlap / overflow / uneven spacing between sections; hover-only or hard-to-click UI (menus, tooltips, charts, `<canvas>`, images); when you want to **draw arrows/circles** to explain it. | one flat annotated `001.png` |
 | 🎬 **Record** | **a bug that takes steps to trigger** | Multi-step or **cross-page** flows; form validation, post-submit state, "it breaks on step 3"; behavior bugs where the *path* matters. Gives Claude an exact **repro script**. | ordered `actions` (no images) |
+| 🛠 **Fix me** | **Nitpick itself** | The overlay misbehaves (marquee won't drag, badge missing, save fails…). Type **or dictate** what's wrong; the report is flagged `meta`, the screenshot **includes the Nitpick UI**, and `/nitpick:process` fixes the tool instead of your app. | `001.png` (with the overlay visible) + tool diagnostics |
 
 > 💡 **Pair any tool with a reference image** — paste or drop one into the comment box when you
 > have a target design/look you want the result to match.
@@ -93,6 +96,7 @@ Three capture tools, three jobs. Pick by **what kind of issue** you're reporting
 # 2. Scaffold the overlay into your Next.js app
 /nitpick:setup
 npm run dev          # (re)start your dev server
+/nitpick:sanity      # optional: verify the install end-to-end in a real browser
 ```
 
 Then, in the browser:
@@ -141,6 +145,7 @@ idle** — no background work, no memory growth.
 | Command | What it does |
 | --- | --- |
 | `/nitpick:setup` | Scaffold the overlay + dev API route into a Next.js app (App or Pages router). |
+| `/nitpick:sanity` | Verify an install end-to-end — static checks + a real-browser test (four-corner selection, snip pipeline, hostile-CSS regression, API bridge). |
 | `/nitpick:process` | Fix the `.nitpick/` queue in Claude (defers to BMAD if detected). |
 | `/nitpick:bmad` | Triage + route feedback through BMAD (`triage` / `quick-fix` / `backlog` / `stories` / `status`). |
 | `/nitpick:setup-bmad` | Install the BMAD-native Nitpick agent. |

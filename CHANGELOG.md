@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.4.0
+
+- **Fix: Snip only worked in the top ~150px of the viewport when the host app has a global
+  `svg { max-width: 100%; height: auto }` reset** (a common design-system base layer). The capture
+  layer was an `<svg>` sized via `width`/`height` *presentation attributes*, which lose to any
+  stylesheet rule — `height: auto` collapsed the fixed-position layer to the SVG intrinsic default
+  (300×150), so below that strip pointer events fell through to the page (native text selection
+  instead of a marquee). Both the viewport marquee layer and the snip-editor drawing layer are now
+  sized with **inline CSS** (`width`/`height`/`maxWidth: 'none'` in `style`), which beats any host
+  stylesheet. The overlay lives inside arbitrary host CSS and can't assume a neutral cascade.
+- **New Snip markup tools: Line and Text.** The snip editor is now Arrow / **Line** / Circle /
+  Box / Pen / **Text**. Line is a plain segment (an arrow without the head). Text places a text
+  box where you click — type (Shift+Enter for a new line), then Enter / click away to set it,
+  Esc to discard it. Like all snip markup, both are baked into the saved image; no coordinates
+  are stored.
+- **New `/nitpick:sanity` command** — verify an installation after setup. Static integrity
+  checks (files, mount, route path, dev-only gates, template drift) plus a real-browser test
+  (`templates/nitpick/sanity.mjs`, Playwright) that activates the overlay and verifies: marquee
+  selection in **all four corners of the viewport**, full-viewport capture-layer geometry, the
+  complete snip pipeline (capture → editor → draw → Esc), the same checks again under an
+  injected hostile reset (`img, svg, video { max-width: 100%; height: auto }` — the 0.4.0
+  regression), Esc deactivation, and an `/api/nitpick` save round-trip whose probe entry is
+  deleted afterwards. Verified against a live app both ways: the suite fails (exit 1) on a
+  pre-0.4.0 overlay and passes 23/23 on the current one.
+- **New "🛠 Fix me" — report problems with Nitpick itself, from inside Nitpick.** A toolbox
+  button switches the comment box into meta mode: type **or dictate** (Web Speech, where the
+  browser has it) what's wrong with the tool, Save, and it queues as `captureType: "meta"` with
+  the screenshot **including the Nitpick UI** (normally excluded) plus diagnostics
+  (`meta: { tool, version, userAgent, hotkey }`; new `NITPICK_VERSION` constant, CI-checked
+  against plugin.json). `/nitpick:process` and the fix skill now treat meta items as tool bugs:
+  fix the installed Nitpick copy against the plugin templates (stale-copy drift is called out —
+  often the fix is just refreshing), never route them to BMAD, and suggest reporting upstream if
+  the template itself is at fault. The sanity suite drives the whole flow (button → comment →
+  Save → `meta` record on disk → cleanup); 25/25 checks pass live, and the saved screenshot was
+  visually confirmed to show the overlay.
+- **CI now guards template integrity** (`scripts/validate.mjs`): overlay svgs must not use
+  width/height presentation attributes (the reset bug above), `maxWidth: 'none'` must stay on
+  both capture/editor svgs, the production gates and `/api/nitpick` endpoint must be present,
+  the DOM hooks the sanity script drives (`data-nitpick-ui="root"`, the badge title,
+  `alt="snip"`, the marquee dasharray) must exist, and `sanity.mjs` must parse.
+
 ## 0.3.3
 
 - **Inspect now saves a cropped screenshot per selected element.** Pick element 1, 2, 3, … and

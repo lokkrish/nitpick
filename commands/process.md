@@ -15,7 +15,8 @@ agent-side of Nitpick — follow the **resolving-ui-feedback** skill's workflow.
    code directly. Tell the user this project uses BMAD and route the feedback through it with
    **`/nitpick:bmad`** (or the `nitpick-bmad` agent) so fixes go via the dev agent / stories.
    Only continue with direct fixing below if there's no BMAD, or the user explicitly asks you to
-   fix directly anyway.
+   fix directly anyway. **Exception:** items with `captureType: "meta"` ("Fix me" reports about
+   the Nitpick tool itself) are never BMAD work — handle them here per "Meta items" below.
 1. Read `.nitpick/queue.json` in the project root.
    - If it's missing or has no `open` items, tell the user there's nothing queued and remind
      them to capture issues with **Ctrl+Shift+. (period)** in their running app. Stop.
@@ -44,6 +45,25 @@ For `.nitpick/<id>.json`:
 - **Apply a real fix** in the source. Match the project's styling approach (Tailwind classes,
   CSS modules, styled-components, etc. — infer from the file). Keep the change minimal and
   consistent with surrounding code.
+
+## Meta items — "Fix me" reports about Nitpick itself
+
+An item with `captureType: "meta"` is the user telling you **the Nitpick tool is broken**, not
+their app. The overlay's "🛠 Fix me" button produces these. Handle them differently:
+
+- `<id>.png` is the viewport **including the Nitpick UI** — view it to see the broken state of
+  the overlay (toolbox, marquee, snip editor, badge…). The `meta` field has diagnostics:
+  overlay `version`, `userAgent`, configured `hotkey`.
+- **Fix the installed Nitpick copy in this project**: the overlay (`**/nitpick/NitpickOverlay.*`,
+  `nitpick-source.*`) and/or the API route (`**/api/nitpick*`). Use the plugin's own templates
+  at `${CLAUDE_PLUGIN_ROOT}/templates/nitpick/` as the reference implementation.
+- **Check for drift first**: if `meta.version` is older than the plugin's templates, the fix is
+  usually refreshing the installed copy from the current template (offer `/nitpick:setup` or
+  copy the changed file) rather than patching old code.
+- If the bug also exists in the plugin's template (not just this project's copy), say so
+  explicitly and suggest reporting it upstream (the repo in the plugin manifest) — fix the
+  local copy either way so the user is unblocked.
+- After fixing, suggest `/nitpick:sanity` to verify, then mark the item resolved as usual.
 
 Be precise and conservative: change what the feedback asks for, verify the file actually
 renders that element, and don't refactor unrelated code.
